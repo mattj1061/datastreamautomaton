@@ -17,6 +17,26 @@
     "./state/database.js": {
       "types": "./dist/state/database.d.ts",
       "default": "./dist/state/database.js"
+    },
+    "./conway/client.js": {
+      "types": "./dist/conway/client.d.ts",
+      "default": "./dist/conway/client.js"
+    },
+    "./treasury/types.js": {
+      "types": "./dist/treasury/types.d.ts",
+      "default": "./dist/treasury/types.js"
+    },
+    "./treasury/intent-queue.js": {
+      "types": "./dist/treasury/intent-queue.d.ts",
+      "default": "./dist/treasury/intent-queue.js"
+    },
+    "./treasury/policy.js": {
+      "types": "./dist/treasury/policy.d.ts",
+      "default": "./dist/treasury/policy.js"
+    },
+    "./treasury/executor.js": {
+      "types": "./dist/treasury/executor.d.ts",
+      "default": "./dist/treasury/executor.js"
     }
   },
   "bin": {
@@ -40,7 +60,16 @@
     "build": "tsc && pnpm -r build",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
-    "clean": "rm -rf dist && pnpm -r clean"
+    "clean": "rm -rf dist && pnpm -r clean",
+    "configure:synthesis": "node scripts/configure-synthesis-controller.mjs",
+    "bootstrap:synthesis": "node scripts/bootstrap-synthesis-automaton.mjs",
+    "run:synthesis": "bash scripts/run-synthesis-controller.sh",
+    "treasury:worker": "node scripts/treasury-vultisig-worker.mjs",
+    "treasury:signer": "node scripts/treasury-vultisig-send-signer.mjs",
+    "treasury:telegram:resolve": "node scripts/treasury-telegram-resolve-chat.mjs",
+    "treasury:telegram:test": "node scripts/treasury-telegram-test.mjs",
+    "treasury:telegram:commands": "node scripts/treasury-telegram-command-worker.mjs",
+    "treasury:telegram:listen": "node scripts/treasury-telegram-command-worker.mjs --loop"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",

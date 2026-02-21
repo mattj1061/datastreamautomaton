@@ -64,6 +64,30 @@ function isForbiddenCommand(command: string, sandboxId: string): string | null {
   return null;
 }
 
+const REVIEW_REASON_MIN_CHARS = 12;
+const LOW_SIGNAL_REVIEW_REASONS = new Set([
+  "general transfer",
+  "fund child",
+  "none",
+  "n/a",
+  "na",
+  "test",
+  "tbd",
+]);
+
+function normalizeApprovalReason(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function hasMeaningfulApprovalReason(reason: string | undefined): boolean {
+  if (!reason) return false;
+  if (reason.length < REVIEW_REASON_MIN_CHARS) return false;
+  const normalized = reason.toLowerCase().trim();
+  return !LOW_SIGNAL_REVIEW_REASONS.has(normalized);
+}
+
 // ─── Built-in Tools ────────────────────────────────────────────
 
 export function createBuiltinTools(sandboxId: string): AutomatonTool[] {
@@ -728,31 +752,110 @@ Model: ${ctx.inference.getDefaultModel()}
         required: ["to_address", "amount_cents"],
       },
       execute: async (args, ctx) => {
+        const recipient = String(args.to_address || "").trim();
+        const requestedReason = normalizeApprovalReason(args.reason);
+        if (!/^0x[a-fA-F0-9]{40}$/.test(recipient)) {
+          return "Blocked: to_address must be a valid 0x-prefixed 40-hex address.";
+        }
+
         // Guard: don't transfer more than half your balance
         const balance = await ctx.conway.getCreditsBalance();
         const amount = args.amount_cents as number;
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return "Blocked: amount_cents must be a positive number.";
+        }
         if (amount > balance / 2) {
           return `Blocked: Cannot transfer more than half your balance ($${(balance / 100).toFixed(2)}). Self-preservation.`;
         }
 
-        const transfer = await ctx.conway.transferCredits(
-          args.to_address as string,
-          amount,
-          args.reason as string | undefined,
+        const {
+          appendTransferIntent,
+          getExecutedSpendLast24hCents,
+        } = await import("../treasury/intent-queue.js");
+        const {
+          evaluateTreasurySpendPolicy,
+          getTreasuryPolicyConfig,
+        } = await import("../treasury/policy.js");
+        const { executeApprovedTransferIntent } = await import("../treasury/executor.js");
+        const { ulid } = await import("ulid");
+
+        const spentLast24hCents = getExecutedSpendLast24hCents(ctx.db);
+        const policyConfig = getTreasuryPolicyConfig();
+        const policy = evaluateTreasurySpendPolicy(
+          {
+            toAddress: recipient,
+            amountCents: amount,
+            balanceCents: balance,
+            spentLast24hCents,
+          },
+          policyConfig,
         );
 
-        const { ulid } = await import("ulid");
-        ctx.db.insertTransaction({
-          id: ulid(),
-          type: "transfer_out",
+        if (
+          policy.decision === "require_human" &&
+          !hasMeaningfulApprovalReason(requestedReason)
+        ) {
+          return `Blocked: human approval is required for this transfer (${policy.reasons.join(", ")}). Include a short reason (${REVIEW_REASON_MIN_CHARS}+ chars) in the reason field.`;
+        }
+
+        const intentId = ulid();
+        const intent = appendTransferIntent(ctx.db, {
+          id: intentId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          requestedBy: "agent",
+          source: "transfer_credits",
+          toAddress: recipient,
           amountCents: amount,
-          balanceAfterCents:
-            transfer.balanceAfterCents ?? Math.max(balance - amount, 0),
-          description: `Transfer to ${args.to_address}: ${args.reason || ""}`,
-          timestamp: new Date().toISOString(),
+          reason: requestedReason || "General transfer",
+          status:
+            policy.decision === "reject"
+              ? "rejected"
+              : policy.decision === "require_human"
+                ? "pending_approval"
+                : "approved",
+          policy: policy.snapshot,
+          approvals:
+            policy.decision === "auto_approve"
+              ? [
+                  {
+                    approvedBy: "policy_engine",
+                    note: "Auto-approved by treasury policy",
+                    at: new Date().toISOString(),
+                  },
+                ]
+              : [],
+          rejection:
+            policy.decision === "reject"
+              ? {
+                  rejectedBy: "policy_engine",
+                  reason: policy.reasons.join(", ") || "policy_reject",
+                  at: new Date().toISOString(),
+                }
+              : undefined,
         });
 
-        return `Credit transfer submitted: $${(amount / 100).toFixed(2)} to ${transfer.toAddress} (status: ${transfer.status}, id: ${transfer.transferId || "n/a"})`;
+        if (policy.decision === "reject") {
+          return `Transfer intent ${intent.id} rejected by treasury policy: ${policy.reasons.join(", ") || "policy_reject"}.`;
+        }
+
+        if (policy.decision === "require_human") {
+          return `Transfer intent ${intent.id} is pending human approval (${policy.reasons.join(", ")}). Reason: "${intent.reason}". Run: automaton-cli treasury approve ${intent.id}`;
+        }
+
+        if (!policyConfig.autoExecuteApproved) {
+          return `Transfer intent ${intent.id} auto-approved by policy and awaiting manual execution. Run: automaton-cli treasury execute ${intent.id}`;
+        }
+
+        const executed = await executeApprovedTransferIntent(
+          ctx.db,
+          ctx.conway,
+          intent.id,
+          {
+            executedBy: "agent:auto",
+          },
+        );
+        return `Transfer intent ${executed.id} processed via ${executed.execution?.backend || "unknown"} (status=${executed.status}; ${executed.execution?.message || "ok"}).`;
       },
     },
 
@@ -1189,37 +1292,132 @@ Model: ${ctx.inference.getDefaultModel()}
         properties: {
           child_id: { type: "string", description: "Child automaton ID" },
           amount_cents: { type: "number", description: "Amount in cents to transfer" },
+          reason: {
+            type: "string",
+            description:
+              "Required for requests that need human approval. Explain why this funding is needed.",
+          },
         },
         required: ["child_id", "amount_cents"],
       },
       execute: async (args, ctx) => {
+        const requestedReason = normalizeApprovalReason(args.reason);
         const child = ctx.db.getChildById(args.child_id as string);
         if (!child) return `Child ${args.child_id} not found.`;
+        if (!/^0x[a-fA-F0-9]{40}$/.test(child.address)) {
+          return `Blocked: Child ${child.id} has no valid wallet address.`;
+        }
+        if (/^0x0{40}$/i.test(child.address)) {
+          return `Blocked: Child ${child.id} wallet address is placeholder zero address. Set the real child wallet before funding.`;
+        }
 
         const balance = await ctx.conway.getCreditsBalance();
         const amount = args.amount_cents as number;
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return "Blocked: amount_cents must be a positive number.";
+        }
         if (amount > balance / 2) {
           return `Blocked: Cannot transfer more than half your balance. Self-preservation.`;
         }
 
-        const transfer = await ctx.conway.transferCredits(
-          child.address,
-          amount,
-          `fund child ${child.id}`,
+        const {
+          appendTransferIntent,
+          getExecutedSpendLast24hCents,
+        } = await import("../treasury/intent-queue.js");
+        const {
+          evaluateTreasurySpendPolicy,
+          getTreasuryPolicyConfig,
+        } = await import("../treasury/policy.js");
+        const { executeApprovedTransferIntent } = await import("../treasury/executor.js");
+        const { ulid } = await import("ulid");
+
+        const spentLast24hCents = getExecutedSpendLast24hCents(ctx.db);
+        const policyConfig = getTreasuryPolicyConfig();
+        const policy = evaluateTreasurySpendPolicy(
+          {
+            toAddress: child.address,
+            amountCents: amount,
+            balanceCents: balance,
+            spentLast24hCents,
+          },
+          policyConfig,
         );
 
-        const { ulid } = await import("ulid");
-        ctx.db.insertTransaction({
-          id: ulid(),
-          type: "transfer_out",
+        if (
+          policy.decision === "require_human" &&
+          !hasMeaningfulApprovalReason(requestedReason)
+        ) {
+          return `Blocked: human approval is required for this child funding request (${policy.reasons.join(", ")}). Include a short reason (${REVIEW_REASON_MIN_CHARS}+ chars) in the reason field.`;
+        }
+
+        const intentId = ulid();
+        const intent = appendTransferIntent(ctx.db, {
+          id: intentId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          requestedBy: "agent",
+          source: "fund_child",
+          toAddress: child.address,
           amountCents: amount,
-          balanceAfterCents:
-            transfer.balanceAfterCents ?? Math.max(balance - amount, 0),
-          description: `Fund child ${child.name} (${child.id})`,
-          timestamp: new Date().toISOString(),
+          reason: requestedReason || `fund child ${child.id}`,
+          childId: child.id,
+          status:
+            policy.decision === "reject"
+              ? "rejected"
+              : policy.decision === "require_human"
+                ? "pending_approval"
+                : "approved",
+          policy: policy.snapshot,
+          approvals:
+            policy.decision === "auto_approve"
+              ? [
+                  {
+                    approvedBy: "policy_engine",
+                    note: "Auto-approved by treasury policy",
+                    at: new Date().toISOString(),
+                  },
+                ]
+              : [],
+          rejection:
+            policy.decision === "reject"
+              ? {
+                  rejectedBy: "policy_engine",
+                  reason: policy.reasons.join(", ") || "policy_reject",
+                  at: new Date().toISOString(),
+                }
+              : undefined,
         });
 
-        return `Funded child ${child.name} with $${(amount / 100).toFixed(2)} (status: ${transfer.status}, id: ${transfer.transferId || "n/a"})`;
+        if (policy.decision === "reject") {
+          return `Child funding intent ${intent.id} rejected by treasury policy: ${policy.reasons.join(", ") || "policy_reject"}.`;
+        }
+
+        if (policy.decision === "require_human") {
+          return `Child funding intent ${intent.id} pending human approval (${policy.reasons.join(", ")}). Reason: "${intent.reason}". Run: automaton-cli treasury approve ${intent.id}`;
+        }
+
+        if (!policyConfig.autoExecuteApproved) {
+          return `Child funding intent ${intent.id} auto-approved and awaiting manual execution. Run: automaton-cli treasury execute ${intent.id}`;
+        }
+
+        const executed = await executeApprovedTransferIntent(
+          ctx.db,
+          ctx.conway,
+          intent.id,
+          {
+            executedBy: "agent:auto",
+          },
+        );
+        if (executed.childId) {
+          const currentChild = ctx.db.getChildById(executed.childId);
+          if (currentChild) {
+            ctx.db.updateChildFunding(
+              currentChild.id,
+              Math.max(0, currentChild.fundedAmountCents + executed.amountCents),
+            );
+          }
+        }
+        return `Child funding intent ${executed.id} processed via ${executed.execution?.backend || "unknown"} (status=${executed.status}; ${executed.execution?.message || "ok"}).`;
       },
     },
     {

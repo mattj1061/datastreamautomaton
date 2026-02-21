@@ -120,7 +120,75 @@ Creator CLI:
 node packages/cli/dist/index.js status
 node packages/cli/dist/index.js logs --tail 20
 node packages/cli/dist/index.js fund 5.00
+node packages/cli/dist/index.js treasury list
+node packages/cli/dist/index.js treasury approve <intent-id>
+node packages/cli/dist/index.js treasury execute <intent-id>
+node packages/cli/dist/index.js treasury confirm <intent-id> --tx <ref> --status executed
+node packages/cli/dist/index.js treasury fail <intent-id> --reason "signer rejected"
+npm run treasury:worker
+npm run treasury:telegram:resolve -- @username --write-env --send-test
+npm run treasury:telegram:test
+npm run treasury:telegram:commands
+npm run treasury:telegram:listen
 ```
+
+Vultisig outbox worker (`npm run treasury:worker`) reads queued intent files from `AUTOMATON_VULTISIG_OUTBOX_DIR`, runs your signer command (`AUTOMATON_VULTISIG_SIGNER_CMD`), and confirms/fails intents through the treasury CLI.
+The worker auto-loads `.env.synthesis` by default (or `AUTOMATON_ENV_FILE` if set), and initializes the outbox directory on first run.
+
+Treasury policy defaults in `.env.synthesis.example` are tuned for a `$5/day` autonomous spend budget. Requests that exceed daily budget or single-call auto-approve threshold require human approval, and the automaton must include a short reason for review.
+
+Telegram treasury alerts are emitted automatically when:
+- a new transfer intent is created (`request_created`)
+- an intent status changes (`approved`, `rejected`, `submitted`, `executed`, `failed`)
+
+When a tx hash is present, alerts include an explorer link (Base by default).
+
+Configure the following env vars (for example in `.env.synthesis`):
+- `AUTOMATON_TREASURY_TELEGRAM_ALERTS_ENABLED=true`
+- `AUTOMATON_TREASURY_TELEGRAM_BOT_TOKEN=<bot-token>`
+- `AUTOMATON_TREASURY_TELEGRAM_CHAT_ID=<chat-id>`
+- `AUTOMATON_TREASURY_TELEGRAM_USERNAME=@degenurai`
+- `AUTOMATON_TREASURY_TELEGRAM_OFFSET_FILE=~/.automaton/treasury-telegram-offset.json`
+- `AUTOMATON_TREASURY_TELEGRAM_COMMAND_POLL_TIMEOUT_SEC=20`
+- `AUTOMATON_TREASURY_TX_EXPLORER_TX_URL_TEMPLATE=https://basescan.org/tx/{tx}`
+
+To resolve your chat ID from recent bot updates:
+```bash
+npm run treasury:telegram:resolve -- @degenurai --write-env --send-test
+```
+If no chat is found, open a DM with your bot and send any message, then rerun the command.
+If username matching still fails, force-select the latest private DM:
+```bash
+npm run treasury:telegram:resolve -- @degenurai --write-env --send-test --latest-private
+```
+
+Telegram command worker (approve/reject from chat):
+```bash
+# one pass over pending commands
+npm run treasury:telegram:commands
+
+# continuous long-poll listener
+npm run treasury:telegram:listen
+```
+Supported commands:
+- `/pending [limit]`
+- `/show <intent_id>`
+- `/approve <intent_id>` (approves and executes)
+- `/approve_only <intent_id>`
+- `/reject <intent_id> <reason>`
+
+Default signer helper:
+```bash
+node scripts/treasury-vultisig-send-signer.mjs /path/to/intent.json
+```
+
+The default signer helper runs `@vultisig/cli` under `node@22` (auto-discovered via `npx`) and executes a `send` for each approved intent using:
+- `AUTOMATON_VULTISIG_SEND_CHAIN` (default `base`)
+- `AUTOMATON_VULTISIG_SEND_TOKEN` (optional token contract)
+- `AUTOMATON_VULTISIG_SEND_AMOUNT_DIVISOR` (default `100`, so `amount = amountCents / 100`)
+- `AUTOMATON_VULTISIG_VAULT` and `AUTOMATON_VULTISIG_PASSWORD` for non-interactive vault selection/signing
+
+Set `AUTOMATON_VULTISIG_WORKER_DRY_RUN=false` once vault settings are configured.
 
 ## Project Structure
 
@@ -138,9 +206,10 @@ src/
   skills/           # Skill loader, registry, format
   social/           # Agent-to-agent communication
   state/            # SQLite database, persistence
+  treasury/         # Spend intent queue, policy engine, execution brokers
   survival/         # Credit monitor, low-compute mode, survival tiers
 packages/
-  cli/              # Creator CLI (status, logs, fund)
+  cli/              # Creator CLI (status, logs, fund, treasury approvals)
 scripts/
   automaton.sh      # Thin curl installer (delegates to runtime wizard)
   conways-rules.txt # Core rules for the automaton

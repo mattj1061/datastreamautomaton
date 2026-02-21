@@ -4,8 +4,15 @@
  * View the automaton's turn log.
  */
 
-import { loadConfig, resolvePath } from "@conway/automaton/config.js";
-import { createDatabase } from "@conway/automaton/state/database.js";
+import { importAutomatonModule } from "../runtime-import.js";
+
+const { loadConfig, resolvePath } =
+  await importAutomatonModule<typeof import("@conway/automaton/config.js")>(
+    "config.js",
+  );
+const { createDatabase } = await importAutomatonModule<
+  typeof import("@conway/automaton/state/database.js")
+>("state/database.js");
 
 const args = process.argv.slice(3);
 let limit = 20;

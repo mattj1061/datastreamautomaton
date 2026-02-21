@@ -129,6 +129,8 @@ export function createHeartbeatDaemon(
           "check_credits",
           "check_usdc_balance",
           "check_social_inbox",
+          "check_pipeline_health",
+          "check_profitability",
         ];
         if (!essentialTasks.includes(entry.task)) continue;
       }

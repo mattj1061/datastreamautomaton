@@ -47,6 +47,42 @@ const DEFAULT_HEARTBEAT_CONFIG: HeartbeatConfig = {
       enabled: true,
     },
     {
+      name: "check_pipeline_health",
+      schedule: "*/5 * * * *",
+      task: "check_pipeline_health",
+      enabled: true,
+    },
+    {
+      name: "check_profitability",
+      schedule: "*/15 * * * *",
+      task: "check_profitability",
+      enabled: true,
+    },
+    {
+      name: "check_customer_demand",
+      schedule: "*/15 * * * *",
+      task: "check_customer_demand",
+      enabled: true,
+    },
+    {
+      name: "check_source_quality",
+      schedule: "*/10 * * * *",
+      task: "check_source_quality",
+      enabled: true,
+    },
+    {
+      name: "evaluate_expansion",
+      schedule: "0 * * * *",
+      task: "evaluate_expansion",
+      enabled: true,
+    },
+    {
+      name: "process_service_patch_queue",
+      schedule: "*/10 * * * *",
+      task: "process_service_patch_queue",
+      enabled: true,
+    },
+    {
       name: "check_social_inbox",
       schedule: "*/2 * * * *",
       task: "check_social_inbox",

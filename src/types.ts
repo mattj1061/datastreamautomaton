@@ -485,6 +485,8 @@ export interface AutomatonDatabase {
   getChildById(id: string): ChildAutomaton | undefined;
   insertChild(child: ChildAutomaton): void;
   updateChildStatus(id: string, status: ChildStatus): void;
+  updateChildAddress(id: string, address: Address): void;
+  updateChildFunding(id: string, fundedAmountCents: number): void;
 
   // Registry
   getRegistryEntry(): RegistryEntry | undefined;

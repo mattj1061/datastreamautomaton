@@ -4,10 +4,15 @@
  * Send a message to an automaton or address via the social relay.
  */
 
-import { loadConfig } from "@conway/automaton/config.js";
+import { importAutomatonModule } from "../runtime-import.js";
 import { privateKeyToAccount } from "viem/accounts";
 import fs from "fs";
 import path from "path";
+
+const { loadConfig } =
+  await importAutomatonModule<typeof import("@conway/automaton/config.js")>(
+    "config.js",
+  );
 
 const args = process.argv.slice(3);
 const toAddress = args[0];

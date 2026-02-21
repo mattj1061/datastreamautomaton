@@ -4,7 +4,12 @@
  * Transfer Conway credits using the configured Conway API key.
  */
 
-import { loadConfig } from "@conway/automaton/config.js";
+import { importAutomatonModule } from "../runtime-import.js";
+
+const { loadConfig } =
+  await importAutomatonModule<typeof import("@conway/automaton/config.js")>(
+    "config.js",
+  );
 
 const args = process.argv.slice(3);
 const amount = args[0];
