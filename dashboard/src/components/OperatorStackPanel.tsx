@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Play, RefreshCcw, RotateCcw, Square, Terminal } from 'lucide-react';
+import { apiFetch } from '../lib/apiFetch';
 import type { OperatorStackStatusResponse } from '../types/automaton';
 
 type ComponentName = 'dashboard-api' | 'dashboard-ui' | 'telegram-listener' | 'treasury-worker-loop';
@@ -60,7 +61,7 @@ export function OperatorStackPanel({ compact = false }: OperatorStackPanelProps)
 
   const loadStatus = useCallback(async () => {
     try {
-      const resp = await fetch('/api/operator-stack/status', { cache: 'no-store' });
+      const resp = await apiFetch('/api/operator-stack/status', { cache: 'no-store' }, { scope: 'read' });
       const json = (await resp.json()) as OperatorStackStatusResponse;
       if (!resp.ok || json?.ok === false) {
         throw new Error(json?.error || `Operator stack status failed (${resp.status})`);
@@ -94,11 +95,11 @@ export function OperatorStackPanel({ compact = false }: OperatorStackPanelProps)
     setActionMessage(null);
     setActionError(null);
     try {
-      const resp = await fetch(`/api/operator-stack/${action}`, {
+      const resp = await apiFetch(`/api/operator-stack/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ components: targetComponents, force }),
-      });
+      }, { scope: 'write' });
       const json = (await resp.json()) as OperatorStackStatusResponse;
       if (!resp.ok || json?.ok === false) {
         throw new Error(json?.error || `Operator stack ${action} failed (${resp.status})`);

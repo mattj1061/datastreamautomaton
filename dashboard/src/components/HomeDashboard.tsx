@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Play, TrendingUp, Zap, Server } from 'lucide-react';
+import { apiFetch } from '../lib/apiFetch';
 import type { AutomatonDashboardRuntime } from '../types/automaton';
 
 function formatUsd(cents: number | undefined): string {
@@ -111,13 +112,13 @@ export function HomeDashboard({ onNavigate, runtime }: HomeDashboardProps) {
     setTreasuryActionError(null);
     setTreasuryActionStatus(null);
     try {
-      const resp = await fetch(`/api/treasury/intents/${encodeURIComponent(intentId)}/${action}`, {
+      const resp = await apiFetch(`/api/treasury/intents/${encodeURIComponent(intentId)}/${action}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),
-      });
+      }, { scope: 'write' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data?.ok === false) {
         throw new Error(data?.error || `Treasury ${action} failed (${resp.status})`);

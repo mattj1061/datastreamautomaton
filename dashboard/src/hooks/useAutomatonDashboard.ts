@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AutomatonDashboardRuntime, AutomatonDashboardSnapshot } from '../types/automaton';
+import { apiFetch } from '../lib/apiFetch';
 
 const DASHBOARD_API_PATH = '/api/dashboard';
 
@@ -16,7 +17,7 @@ export function useAutomatonDashboard(pollMs = 5000): AutomatonDashboardRuntime 
     const started = performance.now();
 
     try {
-      const response = await fetch(DASHBOARD_API_PATH, { cache: 'no-store' });
+      const response = await apiFetch(DASHBOARD_API_PATH, { cache: 'no-store' }, { scope: 'read' });
       const data = (await response.json()) as AutomatonDashboardSnapshot;
       setFetchLatencyMs(Math.round(performance.now() - started));
 

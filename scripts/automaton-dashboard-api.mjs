@@ -37,6 +37,10 @@ const TREASURY_SETTINGS_EDITABLE_KEYS = [
   "AUTOMATON_TREASURY_AUTO_EXECUTE_APPROVED",
 ];
 
+const DASHBOARD_API_AUTH_HEADER_NAME = "x-automaton-dashboard-token";
+const DASHBOARD_API_AUTH_READ_TOKEN_ENV = "AUTOMATON_DASHBOARD_API_READ_TOKEN";
+const DASHBOARD_API_AUTH_WRITE_TOKEN_ENV = "AUTOMATON_DASHBOARD_API_WRITE_TOKEN";
+
 function parseEnvValue(rawValue) {
   const trimmed = rawValue.trim();
   if (
@@ -89,6 +93,117 @@ function readNumberEnv(name, fallback) {
 function readStringEnv(name, fallback = "") {
   const raw = process.env[name];
   return typeof raw === "string" ? raw : fallback;
+}
+
+function firstHeaderValue(value) {
+  if (Array.isArray(value)) {
+    return typeof value[0] === "string" ? value[0] : "";
+  }
+  return typeof value === "string" ? value : "";
+}
+
+function readOptionalTrimmedEnv(name) {
+  const raw = process.env[name];
+  if (typeof raw !== "string") return "";
+  return raw.trim();
+}
+
+function getDashboardApiAuthConfig() {
+  const readToken = readOptionalTrimmedEnv(DASHBOARD_API_AUTH_READ_TOKEN_ENV);
+  const writeToken = readOptionalTrimmedEnv(DASHBOARD_API_AUTH_WRITE_TOKEN_ENV);
+  return {
+    enabled: Boolean(readToken || writeToken),
+    readToken,
+    writeToken,
+    hasReadToken: Boolean(readToken),
+    hasWriteToken: Boolean(writeToken),
+  };
+}
+
+function getDashboardApiRequestToken(req) {
+  const explicit = firstHeaderValue(req.headers[DASHBOARD_API_AUTH_HEADER_NAME]);
+  if (explicit) return explicit.trim();
+
+  const authorization = firstHeaderValue(req.headers.authorization).trim();
+  if (!authorization) return "";
+
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (match) return match[1].trim();
+  return "";
+}
+
+function dashboardApiAuthError(statusCode, requiredScope, code, authConfig) {
+  return {
+    ok: false,
+    error:
+      code === "insufficient_scope"
+        ? `Dashboard API token lacks ${requiredScope} scope.`
+        : "Unauthorized dashboard API request.",
+    auth: {
+      enabled: true,
+      requiredScope,
+      code,
+      acceptedScopes: ["read", "write"],
+      readTokenConfigured: authConfig.hasReadToken,
+      writeTokenConfigured: authConfig.hasWriteToken,
+      header: "Authorization: Bearer <token> or X-Automaton-Dashboard-Token",
+    },
+  };
+}
+
+function authorizeDashboardApiRequest(req, requiredScope = "read") {
+  const authConfig = getDashboardApiAuthConfig();
+  if (!authConfig.enabled) {
+    return { ok: true, requiredScope, auth: { enabled: false } };
+  }
+
+  const token = getDashboardApiRequestToken(req);
+  if (!token) {
+    return {
+      ok: false,
+      statusCode: 401,
+      body: dashboardApiAuthError(401, requiredScope, "missing_token", authConfig),
+    };
+  }
+
+  let grantedScope = null;
+  if (authConfig.writeToken && token === authConfig.writeToken) {
+    grantedScope = "write";
+  } else if (authConfig.readToken && token === authConfig.readToken) {
+    grantedScope = "read";
+  } else {
+    return {
+      ok: false,
+      statusCode: 401,
+      body: dashboardApiAuthError(401, requiredScope, "invalid_token", authConfig),
+    };
+  }
+
+  if (requiredScope === "write" && grantedScope !== "write") {
+    return {
+      ok: false,
+      statusCode: 403,
+      body: dashboardApiAuthError(403, requiredScope, "insufficient_scope", authConfig),
+    };
+  }
+
+  return {
+    ok: true,
+    requiredScope,
+    grantedScope,
+    auth: {
+      enabled: true,
+      hasReadToken: authConfig.hasReadToken,
+      hasWriteToken: authConfig.hasWriteToken,
+    },
+  };
+}
+
+function requireDashboardApiAuth(req, res, requiredScope = "read") {
+  const result = authorizeDashboardApiRequest(req, requiredScope);
+  if (result.ok) return true;
+  jsonResponse(res, result.statusCode || 401, result.body || { ok: false, error: "Unauthorized" });
+  return false;
 }
 
 function isValidEvmAddress(value) {
@@ -641,7 +756,7 @@ function jsonResponse(res, statusCode, body) {
     "Access-Control-Allow-Origin":
       process.env.AUTOMATON_DASHBOARD_API_ALLOW_ORIGIN || "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Automaton-Dashboard-Token",
   });
   res.end(payload);
 }
@@ -1074,29 +1189,34 @@ function startServer() {
       }
 
       if (req.method === "GET" && url.pathname === "/api/dashboard") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
         jsonResponse(res, 200, buildSnapshot());
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/api/treasury/intents") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
         const result = handleListTreasuryIntents(url);
         jsonResponse(res, result.statusCode, result.body);
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/api/treasury/settings") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
         const result = handleGetTreasurySettings();
         jsonResponse(res, result.statusCode, result.body);
         return;
       }
 
       if (req.method === "GET" && url.pathname === "/api/treasury/settings/audit") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
         const result = handleGetTreasurySettingsAudit(url);
         jsonResponse(res, result.statusCode, result.body);
         return;
       }
 
       if (req.method === "POST" && url.pathname === "/api/treasury/settings") {
+        if (!requireDashboardApiAuth(req, res, "write")) return;
         const body = await readJsonBody(req);
         const result = handleUpdateTreasurySettings(body);
         jsonResponse(res, result.statusCode, result.body);
@@ -1104,6 +1224,7 @@ function startServer() {
       }
 
       if (req.method === "GET" && url.pathname === "/api/operator-stack/status") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
         const result = handleGetOperatorStackStatus();
         jsonResponse(res, result.statusCode, result.body);
         return;
@@ -1111,6 +1232,7 @@ function startServer() {
 
       const operatorActionMatch = url.pathname.match(/^\/api\/operator-stack\/(start|stop|restart)$/);
       if (req.method === "POST" && operatorActionMatch) {
+        if (!requireDashboardApiAuth(req, res, "write")) return;
         const [, action] = operatorActionMatch;
         const body = await readJsonBody(req);
         const result = handleOperatorStackAction(action, body);
@@ -1122,6 +1244,7 @@ function startServer() {
         /^\/api\/treasury\/intents\/([^/]+)\/(approve|reject)$/,
       );
       if (req.method === "POST" && actionMatch) {
+        if (!requireDashboardApiAuth(req, res, "write")) return;
         const [, encodedId, action] = actionMatch;
         const id = decodeURIComponent(encodedId);
         const body = await readJsonBody(req);

@@ -9,6 +9,7 @@ import { HomeDashboard } from './components/HomeDashboard';
 import { ProjectsView } from './components/ProjectsView';
 import { MonitoringView } from './components/MonitoringView';
 import { TreasuryView } from './components/TreasuryView';
+import { DashboardApiAuthPanel } from './components/DashboardApiAuthPanel';
 import { useAutomatonDashboard } from './hooks/useAutomatonDashboard';
 
 function App() {
@@ -44,6 +45,7 @@ function App() {
                     {activeApp === 'TREASURY' && <TreasuryView runtime={runtime} />}
                 </main>
             </div>
+            <DashboardApiAuthPanel />
         </div>
     );
 }

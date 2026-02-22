@@ -150,6 +150,12 @@ The API bridge (`scripts/automaton-dashboard-api.mjs`) exposes runtime/treasury 
 
 If you want a custom dashboard API host/port/CORS origin, export `AUTOMATON_DASHBOARD_API_*` env vars before launching `npm run dashboard:api`.
 
+Optional dashboard API auth (recommended before exposing the API beyond localhost):
+- Set `AUTOMATON_DASHBOARD_API_READ_TOKEN` and/or `AUTOMATON_DASHBOARD_API_WRITE_TOKEN` in `.env.synthesis`.
+- If either token is set, protected routes require `Authorization: Bearer <token>` (or `X-Automaton-Dashboard-Token`).
+- `read` scope covers dashboard/treasury/operator status GET endpoints. `write` scope is required for treasury actions/settings writes and operator start/stop/restart.
+- The dashboard UI includes a floating `DASHBOARD API AUTH` panel that stores tokens in browser local storage and automatically attaches them to `/api/*` requests.
+
 One-command local operator stack (dashboard API + dashboard UI + Telegram command listener + looping treasury worker):
 ```bash
 npm run ops:start

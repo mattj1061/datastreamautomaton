@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { History, RefreshCcw } from 'lucide-react';
+import { apiFetch } from '../lib/apiFetch';
 
 interface TreasurySettingsAuditEntry {
   at: string;
@@ -61,9 +62,9 @@ export function TreasurySettingsAuditPanel({ limit = 10 }: TreasurySettingsAudit
 
   const loadAudit = useCallback(async () => {
     try {
-      const resp = await fetch(`/api/treasury/settings/audit?limit=${encodeURIComponent(String(limit))}`, {
+      const resp = await apiFetch(`/api/treasury/settings/audit?limit=${encodeURIComponent(String(limit))}`, {
         cache: 'no-store',
-      });
+      }, { scope: 'read' });
       const data = (await resp.json()) as TreasurySettingsAuditResponse;
       if (!resp.ok || data?.ok === false || !data.audit) {
         throw new Error(data?.error || `Treasury settings audit load failed (${resp.status})`);

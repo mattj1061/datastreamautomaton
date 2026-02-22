@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ExternalLink, Filter, RefreshCcw, Save, Send, ShieldAlert, SlidersHorizontal, XCircle } from 'lucide-react';
 import { TreasurySettingsAuditPanel } from './TreasurySettingsAuditPanel';
+import { apiFetch } from '../lib/apiFetch';
 import type {
   AutomatonDashboardRuntime,
   DashboardIntentSummary,
@@ -140,9 +141,9 @@ export function TreasuryView({ runtime }: TreasuryViewProps) {
     if (search.trim()) params.set('q', search.trim());
 
     try {
-      const resp = await fetch(`/api/treasury/intents?${params.toString()}`, {
+      const resp = await apiFetch(`/api/treasury/intents?${params.toString()}`, {
         cache: 'no-store',
-      });
+      }, { scope: 'read' });
       const data = (await resp.json()) as TreasuryIntentListResponse;
       if (!resp.ok || data?.ok === false) {
         throw new Error(data?.error || `Treasury list failed (${resp.status})`);
@@ -160,7 +161,7 @@ export function TreasuryView({ runtime }: TreasuryViewProps) {
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true);
     try {
-      const resp = await fetch('/api/treasury/settings', { cache: 'no-store' });
+      const resp = await apiFetch('/api/treasury/settings', { cache: 'no-store' }, { scope: 'read' });
       const data = (await resp.json()) as TreasurySettingsResponse;
       if (!resp.ok || data?.ok === false || !data.settings) {
         throw new Error(data?.error || `Treasury settings load failed (${resp.status})`);
@@ -244,11 +245,11 @@ export function TreasuryView({ runtime }: TreasuryViewProps) {
     setActionError(null);
     setActionMessage(null);
     try {
-      const resp = await fetch(`/api/treasury/intents/${encodeURIComponent(intentId)}/${action}`, {
+      const resp = await apiFetch(`/api/treasury/intents/${encodeURIComponent(intentId)}/${action}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
+      }, { scope: 'write' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || data?.ok === false) {
         throw new Error(data?.error || `Treasury ${action} failed (${resp.status})`);
@@ -322,11 +323,11 @@ export function TreasuryView({ runtime }: TreasuryViewProps) {
         },
       };
 
-      const resp = await fetch('/api/treasury/settings', {
+      const resp = await apiFetch('/api/treasury/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-      });
+      }, { scope: 'write' });
       const data = (await resp.json()) as TreasurySettingsResponse;
       if (!resp.ok || data?.ok === false || !data.settings) {
         throw new Error(data?.error || `Treasury settings save failed (${resp.status})`);
