@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ExternalLink, Filter, RefreshCcw, Save, Send, ShieldAlert, SlidersHorizontal, XCircle } from 'lucide-react';
+import { TreasurySettingsAuditPanel } from './TreasurySettingsAuditPanel';
 import type {
   AutomatonDashboardRuntime,
   DashboardIntentSummary,
@@ -577,6 +578,8 @@ export function TreasuryView({ runtime }: TreasuryViewProps) {
           </div>
         )}
       </div>
+
+      <TreasurySettingsAuditPanel />
 
       <div className="border border-panelBorder bg-panelBg rounded-xl p-4 mb-6">
         <div className="flex flex-col xl:flex-row gap-3 xl:items-center">

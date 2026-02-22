@@ -30,8 +30,8 @@ function App() {
                     {/* Mission Control Suite Router */}
                     {activeApp === 'MISSION_CONTROL' && (
                         <div className="h-full overflow-auto p-6">
-                            {activeTab === 'MISSION CONTROL' && <MissionControl />}
-                            {activeTab === 'TASKS' && <TasksView />}
+                            {activeTab === 'MISSION CONTROL' && <MissionControl runtime={runtime} />}
+                            {activeTab === 'TASKS' && <TasksView runtime={runtime} />}
                             {activeTab === 'CHAT' && <ChatInterface />}
                             {activeTab === 'ORG' && <OrgHierarchy />}
                         </div>

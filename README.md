@@ -150,6 +150,21 @@ The API bridge (`scripts/automaton-dashboard-api.mjs`) exposes runtime/treasury 
 
 If you want a custom dashboard API host/port/CORS origin, export `AUTOMATON_DASHBOARD_API_*` env vars before launching `npm run dashboard:api`.
 
+One-command local operator stack (dashboard API + dashboard UI + Telegram command listener + looping treasury worker):
+```bash
+npm run ops:start
+npm run ops:status
+npm run ops:logs           # tails all logs
+npm run ops:logs -- dashboard-api
+npm run ops:restart        # stop + start all components
+npm run ops:restart -- --force   # also kill conflicting listeners on 8787/5174 first
+npm run ops:stop
+```
+Logs and PID files are written under `.runtime/operator-stack/` (gitignored).
+If `dashboard-ui` warns that port `5174` is already in use, stop your existing Vite process first or keep using that existing dev server.
+
+Treasury settings changes made from the dashboard are append-logged to a local JSONL audit log (default `.runtime/treasury-settings-audit.jsonl`) and surfaced in the Treasury screen.
+
 Vultisig outbox worker (`npm run treasury:worker`) reads queued intent files from `AUTOMATON_VULTISIG_OUTBOX_DIR`, runs your signer command (`AUTOMATON_VULTISIG_SIGNER_CMD`), and confirms/fails intents through the treasury CLI.
 The worker auto-loads `.env.synthesis` by default (or `AUTOMATON_ENV_FILE` if set), and initializes the outbox directory on first run.
 

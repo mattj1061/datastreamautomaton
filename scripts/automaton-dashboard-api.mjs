@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import http from "node:http";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
@@ -18,8 +19,13 @@ import {
 import { executeApprovedTransferIntent } from "../dist/treasury/executor.js";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
+const OPERATOR_STACK_SCRIPT_PATH = path.resolve(SCRIPT_DIR, "operator-stack.sh");
 const ENV_FILE_PATH =
   process.env.AUTOMATON_ENV_FILE || path.resolve(SCRIPT_DIR, "../.env.synthesis");
+const TREASURY_SETTINGS_AUDIT_LOG_PATH =
+  process.env.AUTOMATON_TREASURY_SETTINGS_AUDIT_LOG_PATH ||
+  path.resolve(SCRIPT_DIR, "../.runtime/treasury-settings-audit.jsonl");
 const TREASURY_SETTINGS_CONFIRMATION_PHRASE = "APPLY TREASURY SETTINGS";
 const TREASURY_SETTINGS_EDITABLE_KEYS = [
   "AUTOMATON_TREASURY_REQUIRE_ALLOWLIST",
@@ -155,30 +161,80 @@ function readTreasurySettingsValues() {
   };
 }
 
-function buildTreasurySettingsResponseBody(extra = {}) {
-  let fileStat = null;
+function safeReadFileStat(filePath) {
   try {
-    if (fs.existsSync(ENV_FILE_PATH)) {
-      const stat = fs.statSync(ENV_FILE_PATH);
-      fileStat = {
-        exists: true,
-        sizeBytes: stat.size,
-        mtime: stat.mtime.toISOString(),
-      };
-    } else {
-      fileStat = { exists: false, sizeBytes: 0, mtime: null };
+    if (!fs.existsSync(filePath)) {
+      return { exists: false, sizeBytes: 0, mtime: null };
     }
+    const stat = fs.statSync(filePath);
+    return {
+      exists: true,
+      sizeBytes: stat.size,
+      mtime: stat.mtime.toISOString(),
+    };
   } catch {
-    fileStat = { exists: false, sizeBytes: 0, mtime: null };
+    return { exists: false, sizeBytes: 0, mtime: null };
   }
+}
+
+function makeTreasurySettingsDiff(beforeValues, afterValues) {
+  const diff = {};
+  for (const key of [
+    "requireAllowlist",
+    "allowlist",
+    "minReserveCents",
+    "autoApproveMaxCents",
+    "hardPerTransferCents",
+    "hardDailyLimitCents",
+    "autoExecuteApproved",
+  ]) {
+    const before = beforeValues?.[key];
+    const after = afterValues?.[key];
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      diff[key] = { before, after };
+    }
+  }
+  return diff;
+}
+
+function appendTreasurySettingsAuditEntry(entry) {
+  fs.mkdirSync(path.dirname(TREASURY_SETTINGS_AUDIT_LOG_PATH), { recursive: true });
+  fs.appendFileSync(
+    TREASURY_SETTINGS_AUDIT_LOG_PATH,
+    `${JSON.stringify(entry)}\n`,
+    "utf8",
+  );
+}
+
+function readTreasurySettingsAuditEntries(limit = 50) {
+  if (!fs.existsSync(TREASURY_SETTINGS_AUDIT_LOG_PATH)) return [];
+  const raw = fs.readFileSync(TREASURY_SETTINGS_AUDIT_LOG_PATH, "utf8");
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  const parsed = [];
+  for (let i = lines.length - 1; i >= 0 && parsed.length < limit; i -= 1) {
+    try {
+      const entry = JSON.parse(lines[i]);
+      if (entry && typeof entry === "object") parsed.push(entry);
+    } catch {
+      // ignore malformed line
+    }
+  }
+  return parsed;
+}
+
+function buildTreasurySettingsResponseBody(extra = {}) {
+  const fileStat = safeReadFileStat(ENV_FILE_PATH);
+  const auditLogFileStat = safeReadFileStat(TREASURY_SETTINGS_AUDIT_LOG_PATH);
 
   return {
     ok: true,
     settings: {
       envFilePath: ENV_FILE_PATH,
+      auditLogPath: TREASURY_SETTINGS_AUDIT_LOG_PATH,
       editableKeys: TREASURY_SETTINGS_EDITABLE_KEYS,
       confirmationPhrase: TREASURY_SETTINGS_CONFIRMATION_PHRASE,
       file: fileStat,
+      auditLogFile: auditLogFileStat,
       values: readTreasurySettingsValues(),
       notes: {
         localDashboardApiAppliedImmediately: true,
@@ -304,6 +360,30 @@ function handleGetTreasurySettings() {
   };
 }
 
+function parseAuditLimit(url) {
+  const raw = url.searchParams.get("limit");
+  if (!raw) return 25;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 25;
+  return Math.max(1, Math.min(200, Math.floor(parsed)));
+}
+
+function handleGetTreasurySettingsAudit(url) {
+  const limit = parseAuditLimit(url);
+  return {
+    statusCode: 200,
+    body: {
+      ok: true,
+      audit: {
+        logPath: TREASURY_SETTINGS_AUDIT_LOG_PATH,
+        file: safeReadFileStat(TREASURY_SETTINGS_AUDIT_LOG_PATH),
+        limit,
+        entries: readTreasurySettingsAuditEntries(limit),
+      },
+    },
+  };
+}
+
 function handleUpdateTreasurySettings(body) {
   const confirmationPhrase =
     typeof body?.confirmationPhrase === "string" ? body.confirmationPhrase.trim() : "";
@@ -331,6 +411,7 @@ function handleUpdateTreasurySettings(body) {
       : "dashboard-ui-human";
 
   try {
+    const beforeValues = readTreasurySettingsValues();
     const values = coerceTreasurySettingsPayload(body);
     const assignments = {
       AUTOMATON_TREASURY_REQUIRE_ALLOWLIST: values.requireAllowlist ? "true" : "false",
@@ -346,6 +427,18 @@ function handleUpdateTreasurySettings(body) {
     for (const [key, value] of Object.entries(assignments)) {
       process.env[key] = value;
     }
+    const afterValues = readTreasurySettingsValues();
+    const diff = makeTreasurySettingsDiff(beforeValues, afterValues);
+    const changedSettingKeys = Object.keys(diff);
+    appendTreasurySettingsAuditEntry({
+      at: new Date().toISOString(),
+      actor,
+      reason,
+      envFilePath: ENV_FILE_PATH,
+      auditLogPath: TREASURY_SETTINGS_AUDIT_LOG_PATH,
+      changedSettingKeys,
+      diff,
+    });
 
     console.log(
       `[dashboard-api] treasury settings updated by ${actor}: ${reason}`,
@@ -359,6 +452,7 @@ function handleUpdateTreasurySettings(body) {
           reason,
           at: new Date().toISOString(),
           changedKeys: Object.keys(assignments),
+          changedSettingKeys,
         },
       }),
     };
@@ -371,6 +465,172 @@ function handleUpdateTreasurySettings(body) {
       },
     };
   }
+}
+
+function normalizeOperatorStackComponent(name) {
+  const value = String(name || "").trim();
+  const allowed = new Set([
+    "dashboard-api",
+    "dashboard-ui",
+    "telegram-listener",
+    "treasury-worker-loop",
+  ]);
+  return allowed.has(value) ? value : null;
+}
+
+function parseOperatorStackStatusOutput(stdout) {
+  const components = {};
+  const lines = String(stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    if (!line.startsWith("[ops] ")) continue;
+    const body = line.slice(6);
+    const nameMatch = body.match(/^([a-z0-9-]+):\s+(.*)$/i);
+    if (!nameMatch) continue;
+    const [, name, rest] = nameMatch;
+    const normalized = normalizeOperatorStackComponent(name);
+    if (!normalized) continue;
+
+    const entry = {
+      name: normalized,
+      raw: line,
+      state: "unknown",
+      pid: null,
+      port: normalized === "dashboard-api" ? 8787 : normalized === "dashboard-ui" ? 5174 : null,
+      logPath: null,
+      details: rest,
+    };
+
+    let m = rest.match(/^running pid=(\d+) log=(.+)$/);
+    if (m) {
+      entry.state = "running";
+      entry.pid = Number(m[1]);
+      entry.logPath = m[2];
+      components[normalized] = entry;
+      continue;
+    }
+
+    m = rest.match(/^no pid file, but port (\d+) in use by (.+)$/);
+    if (m) {
+      entry.state = "external";
+      entry.port = Number(m[1]);
+      entry.details = `port ${m[1]} in use by ${m[2]}`;
+      components[normalized] = entry;
+      continue;
+    }
+
+    if (/^stale pid file/.test(rest)) {
+      entry.state = "stale";
+      components[normalized] = entry;
+      continue;
+    }
+
+    if (rest === "stopped") {
+      entry.state = "stopped";
+      components[normalized] = entry;
+      continue;
+    }
+
+    components[normalized] = entry;
+  }
+
+  return components;
+}
+
+function runOperatorStackCommand(action, components = [], opts = {}) {
+  const allowedActions = new Set(["start", "stop", "restart", "status"]);
+  if (!allowedActions.has(action)) {
+    throw new Error(`Unsupported operator stack action: ${action}`);
+  }
+
+  const normalizedComponents = (Array.isArray(components) ? components : [])
+    .map(normalizeOperatorStackComponent)
+    .filter(Boolean);
+
+  const args = [OPERATOR_STACK_SCRIPT_PATH];
+  if (opts.force) {
+    args.push("--force");
+  }
+  args.push(action, ...(normalizedComponents.length > 0 ? normalizedComponents : []));
+
+  const timeoutMs = Math.max(5_000, Math.min(120_000, Number(opts.timeoutMs || 30_000)));
+  const run = spawnSync("bash", args, {
+    cwd: ROOT_DIR,
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+
+  return {
+    ok: run.status === 0,
+    exitCode: typeof run.status === "number" ? run.status : null,
+    signal: run.signal || null,
+    stdout: (run.stdout || "").trim(),
+    stderr: (run.stderr || "").trim(),
+    error: run.error ? run.error.message : null,
+    timedOut: Boolean(run.error && /timed out/i.test(run.error.message || "")),
+    action,
+    force: Boolean(opts.force),
+    components: normalizedComponents,
+  };
+}
+
+function buildOperatorStackStatusResponse(actionResult) {
+  const statusRun = runOperatorStackCommand("status", []);
+  const statusComponents = parseOperatorStackStatusOutput(statusRun.stdout);
+  return {
+    ok: true,
+    operatorStack: {
+      scriptPath: OPERATOR_STACK_SCRIPT_PATH,
+      stateDir: path.resolve(ROOT_DIR, ".runtime/operator-stack"),
+      statusFetchedAt: new Date().toISOString(),
+      components: statusComponents,
+      rawStatusOutput: statusRun.stdout,
+      statusCommandOk: statusRun.ok,
+      statusCommandError: statusRun.ok ? null : (statusRun.stderr || statusRun.error || "status command failed"),
+    },
+    actionResult: actionResult || null,
+  };
+}
+
+function handleGetOperatorStackStatus() {
+  return {
+    statusCode: 200,
+    body: buildOperatorStackStatusResponse(null),
+  };
+}
+
+function handleOperatorStackAction(action, body) {
+  const components = Array.isArray(body?.components) ? body.components : [];
+  const force = body?.force === true;
+  const run = runOperatorStackCommand(action, components, { force });
+
+  const base = buildOperatorStackStatusResponse({
+    ok: run.ok,
+    action: run.action,
+    force: run.force,
+    components: run.components,
+    exitCode: run.exitCode,
+    signal: run.signal,
+    stdout: run.stdout,
+    stderr: run.stderr,
+    error: run.error,
+    timedOut: run.timedOut,
+  });
+
+  if (run.ok) {
+    return { statusCode: 200, body: base };
+  }
+  return {
+    statusCode: 500,
+    body: {
+      ...base,
+      ok: false,
+      error: run.stderr || run.error || `operator stack ${action} failed`,
+    },
+  };
 }
 
 function jsonResponse(res, statusCode, body) {
@@ -830,9 +1090,30 @@ function startServer() {
         return;
       }
 
+      if (req.method === "GET" && url.pathname === "/api/treasury/settings/audit") {
+        const result = handleGetTreasurySettingsAudit(url);
+        jsonResponse(res, result.statusCode, result.body);
+        return;
+      }
+
       if (req.method === "POST" && url.pathname === "/api/treasury/settings") {
         const body = await readJsonBody(req);
         const result = handleUpdateTreasurySettings(body);
+        jsonResponse(res, result.statusCode, result.body);
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/operator-stack/status") {
+        const result = handleGetOperatorStackStatus();
+        jsonResponse(res, result.statusCode, result.body);
+        return;
+      }
+
+      const operatorActionMatch = url.pathname.match(/^\/api\/operator-stack\/(start|stop|restart)$/);
+      if (req.method === "POST" && operatorActionMatch) {
+        const [, action] = operatorActionMatch;
+        const body = await readJsonBody(req);
+        const result = handleOperatorStackAction(action, body);
         jsonResponse(res, result.statusCode, result.body);
         return;
       }

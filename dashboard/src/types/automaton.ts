@@ -60,6 +60,15 @@ export interface DashboardIntentSummary {
   } | null;
 }
 
+export interface DashboardHeartbeatSummary {
+  name: string;
+  task: string;
+  enabled: boolean;
+  schedule: string;
+  lastRun: string | null;
+  nextRun: string | null;
+}
+
 export interface AutomatonDashboardSnapshot {
   ok: boolean;
   generatedAt: string;
@@ -83,6 +92,7 @@ export interface AutomatonDashboardSnapshot {
     roughHealth: "nominal" | "attention" | "warning" | string;
     lastTurnAt: string | null;
   };
+  heartbeats?: DashboardHeartbeatSummary[];
   treasury?: {
     counts: Record<string, number>;
     pendingApprovalCount: number;
@@ -148,6 +158,48 @@ export interface TreasuryPolicySettingsEnvelope {
     restartOtherProcessesRecommended?: boolean;
     restartTargets?: string[];
   };
+}
+
+
+
+export interface OperatorStackComponentStatus {
+  name: string;
+  raw: string;
+  state: string;
+  pid: number | null;
+  port: number | null;
+  logPath: string | null;
+  details: string;
+}
+
+export interface OperatorStackStatusEnvelope {
+  scriptPath: string;
+  stateDir: string;
+  statusFetchedAt: string;
+  components: Record<string, OperatorStackComponentStatus>;
+  rawStatusOutput: string;
+  statusCommandOk: boolean;
+  statusCommandError: string | null;
+}
+
+export interface OperatorStackActionResult {
+  ok: boolean;
+  action: string;
+  force: boolean;
+  components: string[];
+  exitCode: number | null;
+  signal: string | null;
+  stdout: string;
+  stderr: string;
+  error: string | null;
+  timedOut: boolean;
+}
+
+export interface OperatorStackStatusResponse {
+  ok: boolean;
+  error?: string;
+  operatorStack?: OperatorStackStatusEnvelope;
+  actionResult?: OperatorStackActionResult | null;
 }
 
 export interface TreasurySettingsResponse {

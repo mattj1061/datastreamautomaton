@@ -74,7 +74,12 @@
     "dashboard:install": "npm --prefix dashboard install",
     "dashboard:dev": "npm --prefix dashboard run dev",
     "dashboard:build": "npm --prefix dashboard run build",
-    "dashboard:preview": "npm --prefix dashboard run preview"
+    "dashboard:preview": "npm --prefix dashboard run preview",
+    "ops:start": "bash scripts/operator-stack.sh start",
+    "ops:stop": "bash scripts/operator-stack.sh stop",
+    "ops:restart": "bash scripts/operator-stack.sh restart",
+    "ops:status": "bash scripts/operator-stack.sh status",
+    "ops:logs": "bash scripts/operator-stack.sh logs"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
