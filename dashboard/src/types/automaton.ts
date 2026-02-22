@@ -213,3 +213,256 @@ export interface TreasurySettingsResponse {
     changedKeys: string[];
   };
 }
+
+export interface FactoryDataSourceStatus {
+  name: string;
+  status: string;
+  reachable: boolean;
+  stale: boolean;
+  staleAgeSeconds: number | null;
+  used: boolean;
+  lastFetchedAt: string | null;
+  path: string | null;
+  message: string | null;
+  error: string | null;
+}
+
+export interface FactoryRelatedEntityRef {
+  type: string;
+  id: string;
+}
+
+export interface FactoryAlert {
+  code: string;
+  severity: 'high' | 'medium' | 'info' | 'low' | string;
+  message: string;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  relatedEntity: FactoryRelatedEntityRef | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface FactoryIntegrationSummary {
+  enabled: boolean;
+  apiBaseUrl: string;
+  internalSnapshotPath: string;
+  productServiceReachability: 'connected' | 'degraded' | 'offline' | string;
+  factoryStatus: 'nominal' | 'attention' | 'warning' | 'degraded' | string;
+  pipelineFreshnessMaxMinutes: number;
+  thresholds: {
+    marginFloor: number;
+    retentionFloor: number;
+    signalQualityMin: number;
+    signalQualityDriftMax: number;
+    minPaidCustomers: number;
+    nextSourceMonthlyCost: number;
+  };
+  autoReprice: {
+    enabled: boolean;
+    productId: string;
+    accessMode: 'latest' | 'history' | string;
+    stepPct: number;
+    maxUsdc: number;
+  };
+  autoExpansion: {
+    applyEnabled: boolean;
+    family: string;
+    sourceRef: string;
+    pollingIntervalSeconds: number;
+    qualityScore: number;
+    namePrefix: string;
+    runSynthesis: boolean;
+    targetProductIds: string[];
+  };
+}
+
+export interface FactoryInputStream {
+  id: string;
+  name: string;
+  family: string;
+  status: string;
+  sourceRef: string;
+  pollingIntervalSeconds: number | null;
+  qualityScore: number | null;
+  lastObservedAt: string | null;
+  freshnessSeconds: number | null;
+  observationsLastHour: number | null;
+  errorCount24h: number | null;
+  costPerMonthUsd: number | null;
+}
+
+export interface FactoryInputFamilySummary {
+  family: string;
+  total: number;
+  active: number;
+  healthyCount: number;
+  medianFreshnessSeconds: number | null;
+  qualityAvg: number | null;
+}
+
+export interface FactorySourceInputsSection {
+  totalStreams: number;
+  activeStreams: number;
+  families: FactoryInputFamilySummary[];
+  items: FactoryInputStream[];
+}
+
+export interface FactoryPipelineStageStatus {
+  stage: string;
+  status: string;
+  cadenceSeconds: number | null;
+  lastSuccessAt: string | null;
+  lastRunAt: string | null;
+  lastDurationMs: number | null;
+  backlogCount: number | null;
+  errorCount24h: number | null;
+}
+
+export interface FactoryAutomationHeartbeatStatus {
+  task: string;
+  name: string;
+  enabled: boolean;
+  schedule: string | null;
+  lastRun: string | null;
+  nextRun: string | null;
+  status: string;
+}
+
+export interface FactoryPipelineHealth {
+  checkedAt: string | null;
+  healthy: boolean | null;
+  status: string | null;
+  lastFeatureAt: string | null;
+  lastPublishAt: string | null;
+  freshnessMinutes: number | null;
+  freshnessThresholdMinutes: number | null;
+  uptime7dPercent: number | null;
+  uptime7dSampleCount: number;
+  lastError: {
+    checkedAt: string | null;
+    error: string | null;
+  } | null;
+}
+
+export interface FactoryPipelineSection {
+  health: FactoryPipelineHealth;
+  stages: FactoryPipelineStageStatus[];
+  automationHeartbeats: FactoryAutomationHeartbeatStatus[];
+}
+
+export interface FactoryOutputProduct {
+  productId: string;
+  status: string;
+  latestPublishAt: string | null;
+  freshnessMinutes: number | null;
+  latestScore: number | null;
+  latestConfidence: number | null;
+  latestRegime: string | null;
+  pricing: {
+    latestPriceUsdc: number | null;
+    historyBasePriceUsdc: number | null;
+  };
+  usage: {
+    calls24h: number | null;
+    paidCalls24h: number | null;
+  };
+  economics: {
+    revenue24h: number | null;
+    revenue7d: number | null;
+  };
+  quality: {
+    qualityScore: number | null;
+    medianConfidence24h: number | null;
+  };
+  badges: string[];
+}
+
+export interface FactoryOutputsSection {
+  totalProducts: number;
+  activeProducts: number;
+  items: FactoryOutputProduct[];
+}
+
+export interface FactoryEconomicsSection {
+  revenuePerDay: number | null;
+  costPerDay: number | null;
+  grossMargin: number | null;
+  customerRetention: number | null;
+  paidCustomers7d: number | null;
+  signalQualityScore: number | null;
+  previousSignalQualityScore: number | null;
+  metricsGeneratedAt: string | null;
+  revenue7d: number | null;
+  cost7d: number | null;
+  netProfit7d: number | null;
+  uptime7dPercent: number | null;
+}
+
+export interface FactoryReinvestmentChecklistItem {
+  key: string;
+  label: string;
+  pass: boolean | null;
+  actual: number | null;
+  target: number | null;
+  unit: string;
+}
+
+export interface FactoryReinvestmentChecklist {
+  netProfit7d: number | null;
+  expansionBudget: number | null;
+  requiredBudget: number | null;
+  items: FactoryReinvestmentChecklistItem[];
+}
+
+export interface FactoryAutonomySection {
+  lastAutoReprice: Record<string, unknown> | null;
+  lastExpansionEvaluation: Record<string, unknown> | null;
+  lastExpansionApplied: Record<string, unknown> | null;
+  patchPipeline: Record<string, unknown> | null;
+  nextSourceCandidate: {
+    family: string;
+    sourceRef: string;
+    pollingIntervalSeconds: number;
+    qualityScore: number;
+    targetProductIds: string[];
+    autoApplyEnabled: boolean;
+    runSynthesisAfterApply: boolean;
+  };
+  autoRepriceConfig: {
+    enabled: boolean;
+    productId: string;
+    accessMode: string;
+    stepPct: number;
+    maxUsdc: number;
+  };
+  reinvestment: FactoryReinvestmentChecklist;
+}
+
+export interface FactorySnapshot {
+  generatedAt: string;
+  snapshotMs: number;
+  mode: 'live' | 'degraded_runtime_only' | 'offline';
+  integration: FactoryIntegrationSummary;
+  sources: FactorySourceInputsSection;
+  pipeline: FactoryPipelineSection;
+  outputs: FactoryOutputsSection;
+  economics: FactoryEconomicsSection;
+  autonomy: FactoryAutonomySection;
+  alerts: FactoryAlert[];
+  dataSources: FactoryDataSourceStatus[];
+}
+
+export interface FactoryDashboardResponse {
+  ok: boolean;
+  error?: string;
+  factory?: FactorySnapshot;
+}
+
+export interface FactoryDashboardRuntime {
+  snapshot: FactorySnapshot | null;
+  loading: boolean;
+  connected: boolean;
+  error: string | null;
+  fetchLatencyMs: number | null;
+  refresh: () => Promise<void>;
+}

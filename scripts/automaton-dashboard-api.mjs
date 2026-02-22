@@ -17,6 +17,7 @@ import {
   getExecutedSpendLast24hCents,
 } from "../dist/treasury/intent-queue.js";
 import { executeApprovedTransferIntent } from "../dist/treasury/executor.js";
+import { handleGetFactorySnapshot } from "./dashboard-factory-snapshot.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
@@ -1191,6 +1192,13 @@ function startServer() {
       if (req.method === "GET" && url.pathname === "/api/dashboard") {
         if (!requireDashboardApiAuth(req, res, "read")) return;
         jsonResponse(res, 200, buildSnapshot());
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/factory") {
+        if (!requireDashboardApiAuth(req, res, "read")) return;
+        const result = await handleGetFactorySnapshot();
+        jsonResponse(res, result.statusCode, result.body);
         return;
       }
 

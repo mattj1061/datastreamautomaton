@@ -147,6 +147,7 @@ The dashboard UI lives in `dashboard/` and polls `/api/dashboard` via the Vite p
 The API bridge (`scripts/automaton-dashboard-api.mjs`) exposes runtime/treasury snapshots at:
 - `GET /api/health`
 - `GET /api/dashboard`
+- `GET /api/factory` (Data Stream Factory aggregate snapshot; degrades to runtime-only when product service snapshot is unavailable)
 
 If you want a custom dashboard API host/port/CORS origin, export `AUTOMATON_DASHBOARD_API_*` env vars before launching `npm run dashboard:api`.
 
@@ -170,6 +171,8 @@ Logs and PID files are written under `.runtime/operator-stack/` (gitignored).
 If `dashboard-ui` warns that port `5174` is already in use, stop your existing Vite process first or keep using that existing dev server.
 
 Treasury settings changes made from the dashboard are append-logged to a local JSONL audit log (default `.runtime/treasury-settings-audit.jsonl`) and surfaced in the Treasury screen.
+
+The `FACTORY` tab monitors synthesis inputs/pipeline/outputs using `/api/factory`. For full stream/product inventory it expects the product service to expose `GET /v1/internal/factory/snapshot` (authorized with `AUTOMATON_INTERNAL_TOKEN`); otherwise it renders a runtime-only degraded view from automaton KV telemetry.
 
 Vultisig outbox worker (`npm run treasury:worker`) reads queued intent files from `AUTOMATON_VULTISIG_OUTBOX_DIR`, runs your signer command (`AUTOMATON_VULTISIG_SIGNER_CMD`), and confirms/fails intents through the treasury CLI.
 The worker auto-loads `.env.synthesis` by default (or `AUTOMATON_ENV_FILE` if set), and initializes the outbox directory on first run.

@@ -17,7 +17,7 @@ log_file() { echo "$LOG_DIR/$1.log"; }
 component_cmd() {
   case "$1" in
     dashboard-api)
-      echo 'npm run dashboard:api'
+      echo 'node scripts/automaton-dashboard-api.mjs'
       ;;
     dashboard-ui)
       echo 'npm --prefix dashboard run dev -- --host 127.0.0.1 --strictPort'
@@ -123,7 +123,7 @@ start_component() {
     return 0
   fi
 
-  local cmd log pf pid port
+  local cmd log pf pid port launch_cmd
   cmd="$(component_cmd "$name")"
   log="$(log_file "$name")"
   pf="$(pid_file "$name")"
@@ -140,14 +140,20 @@ start_component() {
     return 0
   fi
 
+  launch_cmd="$cmd"
+  if [[ "$name" == "dashboard-api" ]]; then
+    launch_cmd="exec $cmd"
+  fi
+
   {
     echo ""
     echo "[ops] ===== $(date -u +%Y-%m-%dT%H:%M:%SZ) start $name ====="
     echo "[ops] cmd: $cmd"
   } >>"$log"
 
-  nohup bash -lc "cd \"$ROOT_DIR\" && $cmd" >>"$log" 2>&1 &
+  nohup bash -lc "cd \"$ROOT_DIR\" && $launch_cmd" </dev/null >>"$log" 2>&1 &
   pid=$!
+  disown "$pid" 2>/dev/null || true
   echo "$pid" >"$pf"
   sleep 1
 

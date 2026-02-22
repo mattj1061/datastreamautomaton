@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Users, FolderKanban, Activity, Settings, Zap, Wallet } from 'lucide-react';
+import { Home, Users, FolderKanban, Activity, Settings, Zap, Wallet, Factory as FactoryIcon } from 'lucide-react';
 
 export function Sidebar({ activeApp, setActiveApp }: { activeApp: string, setActiveApp: (app: string) => void }) {
     return (
@@ -13,6 +13,7 @@ export function Sidebar({ activeApp, setActiveApp }: { activeApp: string, setAct
                 <NavItem icon={<Users className="w-5 h-5" />} tooltip="Mission Control" active={activeApp === 'MISSION_CONTROL'} onClick={() => setActiveApp('MISSION_CONTROL')} />
                 <NavItem icon={<FolderKanban className="w-5 h-5" />} tooltip="Projects" active={activeApp === 'PROJECTS'} onClick={() => setActiveApp('PROJECTS')} />
                 <NavItem icon={<Activity className="w-5 h-5" />} tooltip="Monitoring" active={activeApp === 'MONITORING'} onClick={() => setActiveApp('MONITORING')} />
+                <NavItem icon={<FactoryIcon className="w-5 h-5" />} tooltip="Data Stream Factory" active={activeApp === 'FACTORY'} onClick={() => setActiveApp('FACTORY')} />
                 <NavItem icon={<Wallet className="w-5 h-5" />} tooltip="Treasury" active={activeApp === 'TREASURY'} onClick={() => setActiveApp('TREASURY')} />
             </nav>
 

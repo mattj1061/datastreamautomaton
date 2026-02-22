@@ -8,6 +8,7 @@ import { ChatInterface } from './components/ChatInterface';
 import { HomeDashboard } from './components/HomeDashboard';
 import { ProjectsView } from './components/ProjectsView';
 import { MonitoringView } from './components/MonitoringView';
+import { FactoryView } from './components/FactoryView';
 import { TreasuryView } from './components/TreasuryView';
 import { DashboardApiAuthPanel } from './components/DashboardApiAuthPanel';
 import { useAutomatonDashboard } from './hooks/useAutomatonDashboard';
@@ -42,6 +43,7 @@ function App() {
                     {activeApp === 'HOME' && <HomeDashboard onNavigate={setActiveApp} runtime={runtime} />}
                     {activeApp === 'PROJECTS' && <ProjectsView />}
                     {activeApp === 'MONITORING' && <MonitoringView runtime={runtime} />}
+                    {activeApp === 'FACTORY' && <FactoryView runtime={runtime} />}
                     {activeApp === 'TREASURY' && <TreasuryView runtime={runtime} />}
                 </main>
             </div>
