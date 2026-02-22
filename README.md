@@ -132,6 +132,24 @@ npm run treasury:telegram:commands
 npm run treasury:telegram:listen
 ```
 
+Dashboard (design repo integrated into this runtime):
+```bash
+# one-time install for the imported Vite dashboard app
+npm run dashboard:install
+
+# terminal 1: local API bridge (reads automaton SQLite/config)
+npm run dashboard:api
+
+# terminal 2: Vite UI on http://127.0.0.1:5174
+npm run dashboard:dev
+```
+The dashboard UI lives in `dashboard/` and polls `/api/dashboard` via the Vite proxy.
+The API bridge (`scripts/automaton-dashboard-api.mjs`) exposes runtime/treasury snapshots at:
+- `GET /api/health`
+- `GET /api/dashboard`
+
+If you want a custom dashboard API host/port/CORS origin, export `AUTOMATON_DASHBOARD_API_*` env vars before launching `npm run dashboard:api`.
+
 Vultisig outbox worker (`npm run treasury:worker`) reads queued intent files from `AUTOMATON_VULTISIG_OUTBOX_DIR`, runs your signer command (`AUTOMATON_VULTISIG_SIGNER_CMD`), and confirms/fails intents through the treasury CLI.
 The worker auto-loads `.env.synthesis` by default (or `AUTOMATON_ENV_FILE` if set), and initializes the outbox directory on first run.
 
@@ -212,7 +230,9 @@ packages/
   cli/              # Creator CLI (status, logs, fund, treasury approvals)
 scripts/
   automaton.sh      # Thin curl installer (delegates to runtime wizard)
+  automaton-dashboard-api.mjs # Local JSON API bridge for dashboard UI
   conways-rules.txt # Core rules for the automaton
+dashboard/          # Imported React/Vite operator dashboard (UI)
 ```
 
 ## License

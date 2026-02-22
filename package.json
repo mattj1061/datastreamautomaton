@@ -69,7 +69,12 @@
     "treasury:telegram:resolve": "node scripts/treasury-telegram-resolve-chat.mjs",
     "treasury:telegram:test": "node scripts/treasury-telegram-test.mjs",
     "treasury:telegram:commands": "node scripts/treasury-telegram-command-worker.mjs",
-    "treasury:telegram:listen": "node scripts/treasury-telegram-command-worker.mjs --loop"
+    "treasury:telegram:listen": "node scripts/treasury-telegram-command-worker.mjs --loop",
+    "dashboard:api": "node scripts/automaton-dashboard-api.mjs",
+    "dashboard:install": "npm --prefix dashboard install",
+    "dashboard:dev": "npm --prefix dashboard run dev",
+    "dashboard:build": "npm --prefix dashboard run build",
+    "dashboard:preview": "npm --prefix dashboard run preview"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
