@@ -79,7 +79,12 @@
     "ops:stop": "bash scripts/operator-stack.sh stop",
     "ops:restart": "bash scripts/operator-stack.sh restart",
     "ops:status": "bash scripts/operator-stack.sh status",
-    "ops:logs": "bash scripts/operator-stack.sh logs"
+    "ops:logs": "bash scripts/operator-stack.sh logs",
+    "ops:sandbox:start": "bash scripts/operator-stack.sh start sandbox-control",
+    "ops:sandbox:stop": "bash scripts/operator-stack.sh stop sandbox-control",
+    "ops:sandbox:restart": "bash scripts/operator-stack.sh restart sandbox-control",
+    "ops:sandbox:status": "bash scripts/operator-stack.sh status sandbox-control",
+    "ops:sandbox:logs": "bash scripts/operator-stack.sh logs sandbox-control"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",

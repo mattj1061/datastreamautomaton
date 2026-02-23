@@ -106,6 +106,31 @@ function severityBadgeClass(severity: string): string {
   return statusBadgeClass(severity);
 }
 
+function classifyFactorySource(apiBaseUrl: string | null | undefined): { kind: 'local' | 'sandbox' | 'remote' | 'unknown'; label: string; host: string } {
+  if (!apiBaseUrl) return { kind: 'unknown', label: 'UNKNOWN', host: '—' };
+  try {
+    const url = new URL(apiBaseUrl);
+    const host = url.host || url.hostname || apiBaseUrl;
+    const hostname = (url.hostname || '').toLowerCase();
+    if (hostname === '127.0.0.1' || hostname === 'localhost') {
+      return { kind: 'local', label: 'LOCAL', host };
+    }
+    if (hostname.endsWith('.life.conway.tech')) {
+      return { kind: 'sandbox', label: 'SANDBOX', host };
+    }
+    return { kind: 'remote', label: 'REMOTE', host };
+  } catch {
+    return { kind: 'unknown', label: 'UNKNOWN', host: apiBaseUrl };
+  }
+}
+
+function factorySourceBadgeClass(kind: 'local' | 'sandbox' | 'remote' | 'unknown'): string {
+  if (kind === 'local') return 'border-neonCyan/30 text-neonCyan bg-neonCyan/10';
+  if (kind === 'sandbox') return 'border-green-500/30 text-green-300 bg-green-500/10';
+  if (kind === 'remote') return 'border-yellow-500/30 text-yellow-300 bg-yellow-500/10';
+  return 'border-gray-700 text-gray-300 bg-black/20';
+}
+
 function humanizeStatus(status: string | null | undefined): string {
   if (!status) return 'UNKNOWN';
   return status.replace(/_/g, ' ').toUpperCase();
@@ -412,6 +437,7 @@ export function FactoryView({ runtime }: FactoryViewProps) {
 
   const runtimeName = runtime.snapshot?.config?.name || 'Automaton';
   const productServiceSource = dataSources.find((d) => d.name === 'product_service_internal_factory_snapshot') || null;
+  const factorySource = classifyFactorySource(integration?.apiBaseUrl);
 
   const expansionEvalObj = readRecord(autonomy?.lastExpansionEvaluation);
   const expansionDecisionObj = readRecord(expansionEvalObj ? expansionEvalObj.decision : null);
@@ -437,6 +463,9 @@ export function FactoryView({ runtime }: FactoryViewProps) {
           </span>
           <span className={`text-xs font-mono px-2 py-1 rounded border ${factory.connected ? 'border-green-500/30 text-green-300 bg-green-500/10' : 'border-yellow-500/30 text-yellow-300 bg-yellow-500/10'}`}>
             FACTORY API {factory.connected ? 'CONNECTED' : 'DEGRADED'}
+          </span>
+          <span className={`text-xs font-mono px-2 py-1 rounded border ${factorySourceBadgeClass(factorySource.kind)}`} title={integration?.apiBaseUrl || 'No product API URL configured'}>
+            FACTORY SOURCE {factorySource.label} <span className="text-gray-400">{factorySource.host}</span>
           </span>
           <button
             onClick={() => { void factory.refresh(); }}

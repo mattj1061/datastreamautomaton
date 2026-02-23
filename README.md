@@ -157,6 +157,16 @@ Optional dashboard API auth (recommended before exposing the API beyond localhos
 - `read` scope covers dashboard/treasury/operator status GET endpoints. `write` scope is required for treasury actions/settings writes and operator start/stop/restart.
 - The dashboard UI includes a floating `DASHBOARD API AUTH` panel that stores tokens in browser local storage and automatically attaches them to `/api/*` requests.
 
+Sandbox control-plane profile (recommended on paid sandbox; no Vite dashboard UI):
+```bash
+npm run ops:sandbox:start
+npm run ops:sandbox:status
+npm run ops:sandbox:logs
+npm run ops:sandbox:restart -- --force
+npm run ops:sandbox:stop
+```
+This starts `automaton-runtime`, private `dashboard-api`, Telegram command listener, and looping treasury worker, while intentionally excluding the Vite dev UI (`dashboard-ui`).
+
 One-command local operator stack (dashboard API + dashboard UI + Telegram command listener + looping treasury worker):
 ```bash
 npm run ops:start

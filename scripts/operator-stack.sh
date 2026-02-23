@@ -19,6 +19,9 @@ component_cmd() {
     dashboard-api)
       echo 'node scripts/automaton-dashboard-api.mjs'
       ;;
+    automaton-runtime)
+      echo 'npm run run:synthesis'
+      ;;
     dashboard-ui)
       echo 'npm --prefix dashboard run dev -- --host 127.0.0.1 --strictPort'
       ;;
@@ -44,6 +47,7 @@ CMD
 component_desc() {
   case "$1" in
     dashboard-api) echo 'Dashboard API bridge (:8787)';;
+    automaton-runtime) echo 'Automaton synthesis controller runtime';;
     dashboard-ui) echo 'Dashboard Vite dev server (:5174)';;
     telegram-listener) echo 'Telegram treasury command listener';;
     treasury-worker-loop) echo 'Looping Vultisig outbox worker';;
@@ -235,8 +239,14 @@ resolve_components() {
       all)
         printf '%s\n' "${ALL_COMPONENTS[@]}"
         ;;
-      dashboard-api|dashboard-ui|telegram-listener|treasury-worker-loop)
+      dashboard-api|dashboard-ui|telegram-listener|treasury-worker-loop|automaton-runtime)
         echo "$name"
+        ;;
+      sandbox-control)
+        echo "automaton-runtime"
+        echo "dashboard-api"
+        echo "telegram-listener"
+        echo "treasury-worker-loop"
         ;;
       *)
         echo "Unknown component: $name" >&2
@@ -255,6 +265,8 @@ Components:
   dashboard-ui
   telegram-listener
   treasury-worker-loop
+  automaton-runtime
+  sandbox-control (alias: automaton-runtime + dashboard-api + telegram-listener + treasury-worker-loop)
   all (alias)
 
 Examples:
@@ -263,6 +275,7 @@ Examples:
   bash scripts/operator-stack.sh --force restart dashboard-api dashboard-ui
   bash scripts/operator-stack.sh status
   bash scripts/operator-stack.sh logs dashboard-api
+  bash scripts/operator-stack.sh start sandbox-control
 USAGE
 }
 
