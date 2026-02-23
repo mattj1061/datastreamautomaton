@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  ArrowRight,
   Blocks,
   CircleDollarSign,
   Database,
@@ -216,6 +217,77 @@ function SectionShell({ title, right, children }: { title: string; right?: React
         {right}
       </div>
       <div className="flex-1 min-h-0">{children}</div>
+    </div>
+  );
+}
+
+function FlowNodeCard({ title, icon, value, subtitle, status }: { title: string; icon: React.ReactNode; value: string; subtitle: string; status: string; }) {
+  return (
+    <div className="min-w-[180px] flex-1 border border-gray-800 rounded-xl p-3 bg-black/20">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-[10px] font-mono tracking-widest text-gray-500">{title}</div>
+        <div className="text-gray-400">{icon}</div>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-base font-mono text-gray-100">{value}</div>
+        <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(status)}`}>
+          {humanizeStatus(status)}
+        </span>
+      </div>
+      <div className="text-[11px] text-gray-500 mt-1">{subtitle}</div>
+    </div>
+  );
+}
+
+function FlowConnector() {
+  return (
+    <div className="hidden 2xl:flex items-center justify-center text-gray-600 px-1">
+      <ArrowRight className="w-4 h-4" />
+    </div>
+  );
+}
+
+function AlertDigestStrip({ alerts }: { alerts: FactoryAlert[] }) {
+  const counts = alerts.reduce(
+    (acc, alert) => {
+      const key = String(alert.severity || '').toLowerCase();
+      if (key === 'high') acc.high += 1;
+      else if (key === 'medium') acc.medium += 1;
+      else if (key === 'info') acc.info += 1;
+      else acc.other += 1;
+      return acc;
+    },
+    { high: 0, medium: 0, info: 0, other: 0 }
+  );
+  const top = alerts.slice(0, 3);
+
+  return (
+    <div className="border border-panelBorder bg-panelBg rounded-xl p-4">
+      <div className="flex flex-col xl:flex-row xl:items-center gap-3 xl:gap-4">
+        <div className="flex items-center gap-2 min-w-[180px]">
+          <Gauge className="w-4 h-4 text-neonCyan" />
+          <span className="font-mono text-xs tracking-widest text-gray-400">OPERATOR PRIORITIES</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`text-[10px] font-mono px-2 py-1 rounded border ${counts.high > 0 ? statusBadgeClass('warning') : statusBadgeClass('ok')}`}>HIGH {counts.high}</span>
+          <span className={`text-[10px] font-mono px-2 py-1 rounded border ${counts.medium > 0 ? statusBadgeClass('attention') : statusBadgeClass('ok')}`}>MED {counts.medium}</span>
+          <span className={`text-[10px] font-mono px-2 py-1 rounded border ${statusBadgeClass('info')}`}>INFO {counts.info}</span>
+          <span className="text-[10px] font-mono px-2 py-1 rounded border border-gray-700 text-gray-400">TOTAL {alerts.length}</span>
+        </div>
+        <div className="flex-1 min-w-0">
+          {top.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {top.map((alert) => (
+                <span key={`${alert.code}-${alert.lastSeenAt}`} className={`max-w-full text-[10px] font-mono px-2 py-1 rounded border ${severityBadgeClass(alert.severity)}`} title={alert.message}>
+                  {alert.code}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-green-300 font-mono">No active factory alerts.</div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -500,6 +572,26 @@ export function FactoryView({ runtime }: FactoryViewProps) {
   const autoRepriceObj = readRecord(autonomy?.lastAutoReprice);
   const lastExpansionAppliedObj = readRecord(autonomy?.lastExpansionApplied);
 
+  const staleStreamCount = useMemo(() => {
+    return (sources?.items || []).filter((stream) => {
+      const freshnessSeconds = stream.freshnessSeconds ?? null;
+      const polling = stream.pollingIntervalSeconds ?? 60;
+      if (freshnessSeconds == null) return false;
+      return freshnessSeconds > Math.max(polling * 3, 300);
+    }).length;
+  }, [sources?.items]);
+
+  const staleProductCount = useMemo(() => {
+    return (outputs?.items || []).filter((product) => {
+      const badges = (product.badges || []).map((b) => String(b).toLowerCase());
+      return badges.includes('stale') || ((product.freshnessMinutes ?? 0) > 20);
+    }).length;
+  }, [outputs?.items]);
+
+  const settlementCoverageLabel = settlement?.summary?.txHashCoverageRate == null
+    ? '—'
+    : `${(settlement.summary.txHashCoverageRate * 100).toFixed(1)}%`;
+
   return (
     <div className="h-full flex flex-col p-8 pt-12 animate-fade-in overflow-y-auto custom-scrollbar gap-6">
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
@@ -556,11 +648,22 @@ export function FactoryView({ runtime }: FactoryViewProps) {
             <KpiCard title="FACTORY API LATENCY" value={factory.fetchLatencyMs == null ? '—' : `${factory.fetchLatencyMs}ms`} subtitle={runtime.fetchLatencyMs == null ? 'runtime n/a' : `runtime ${runtime.fetchLatencyMs}ms`} icon={<Server className="w-4 h-4" />} />
           </div>
 
+          <div className="w-full">
+            <AlertDigestStrip alerts={alerts} />
+          </div>
+
           <div className="border border-panelBorder bg-panelBg rounded-xl p-4">
             <div className="flex flex-col xl:flex-row xl:items-end gap-4">
               <div className="flex items-center gap-2 text-gray-400 min-w-[140px]">
                 <Filter className="w-4 h-4" />
                 <span className="font-mono text-xs tracking-widest">FILTERS</span>
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center text-[10px] font-mono text-gray-400 xl:ml-auto">
+                <span className="px-2 py-1 rounded border border-gray-800 bg-black/20">streams {filteredStreams.length}</span>
+                <span className="px-2 py-1 rounded border border-gray-800 bg-black/20">products {filteredProducts.length}</span>
+                <span className="px-2 py-1 rounded border border-gray-800 bg-black/20">alerts {alerts.length}</span>
+                <span className="px-2 py-1 rounded border border-gray-800 bg-black/20">mode {snapshot.mode}</span>
               </div>
 
               <label className="flex flex-col gap-1 text-xs min-w-[220px]">
@@ -600,6 +703,56 @@ export function FactoryView({ runtime }: FactoryViewProps) {
               </label>
             </div>
           </div>
+
+
+          <SectionShell title="FACTORY FLOW" right={<span className="text-[10px] font-mono text-gray-500">scan left → right</span>}>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col 2xl:flex-row items-stretch gap-2">
+                <FlowNodeCard
+                  title="INPUTS"
+                  icon={<Database className="w-4 h-4" />}
+                  value={`${formatNum(sources?.activeStreams, 0)}/${formatNum(sources?.totalStreams, 0)}`}
+                  subtitle={`active/total • stale ${formatNum(staleStreamCount, 0)}`}
+                  status={(staleStreamCount ?? 0) > 0 ? 'attention' : 'connected'}
+                />
+                <FlowConnector />
+                <FlowNodeCard
+                  title="PIPELINE"
+                  icon={<Workflow className="w-4 h-4" />}
+                  value={formatMaybeMinutes(pipeline?.health?.freshnessMinutes)}
+                  subtitle={`threshold ${formatMaybeMinutes(pipeline?.health?.freshnessThresholdMinutes)} • uptime ${formatPctPoints(pipeline?.health?.uptime7dPercent)}`}
+                  status={pipeline?.health?.healthy === false ? 'warning' : (pipeline?.health?.healthy === true ? 'connected' : 'degraded')}
+                />
+                <FlowConnector />
+                <FlowNodeCard
+                  title="OUTPUTS"
+                  icon={<Blocks className="w-4 h-4" />}
+                  value={`${formatNum(outputs?.activeProducts, 0)}/${formatNum(outputs?.totalProducts, 0)}`}
+                  subtitle={`active/total • stale ${formatNum(staleProductCount, 0)}`}
+                  status={(staleProductCount ?? 0) > 0 ? 'warning' : 'connected'}
+                />
+                <FlowConnector />
+                <FlowNodeCard
+                  title="DELIVERY"
+                  icon={<Server className="w-4 h-4" />}
+                  value={`${formatNum(delivery?.webhooks?.statusCounts?.delivered, 0)} ok / ${formatNum(delivery?.webhooks?.statusCounts?.failed, 0)} fail`}
+                  subtitle={`dead-letter ${formatNum(delivery?.webhooks?.statusCounts?.deadLettered, 0)} • ${humanizeStatus(delivery?.webhooks?.endpointReachability || 'unknown')}`}
+                  status={delivery?.webhooks?.statusCounts?.deadLettered ? 'warning' : (delivery?.webhooks?.available ? 'connected' : 'degraded')}
+                />
+                <FlowConnector />
+                <FlowNodeCard
+                  title="SETTLEMENT"
+                  icon={<CircleDollarSign className="w-4 h-4" />}
+                  value={`${formatNum(settlement?.summary?.reconciledPayments, 0)}/${formatNum(settlement?.summary?.officialAcceptedPayments, 0)}`}
+                  subtitle={`reconciled/official • txhash ${settlementCoverageLabel}`}
+                  status={(settlement?.summary?.failedOfficialPayments ?? 0) > 0 ? 'warning' : (settlement?.available ? 'connected' : 'degraded')}
+                />
+              </div>
+              <div className="text-[11px] text-gray-500 font-mono">
+                Flow intent: ingest raw streams → synthesize signals → publish products → deliver to buyers/agents → reconcile payments/settlement.
+              </div>
+            </div>
+          </SectionShell>
 
           <div className="grid grid-cols-1 2xl:grid-cols-3 gap-6 items-start">
             <SectionShell title="INPUT STREAMS" right={<span className="text-[10px] font-mono text-gray-500">{filteredStreams.length} visible</span>}>
@@ -687,6 +840,108 @@ export function FactoryView({ runtime }: FactoryViewProps) {
                 )}
               </div>
             </SectionShell>
+          </div>
+
+          <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6 items-start">
+          <SectionShell title="DELIVERY CHANNELS (WEBHOOKS)" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
+            <div className="space-y-3">
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-mono text-xs text-gray-300 mb-2">WEBHOOK DELIVERY SUMMARY</div>
+                    <div className="text-sm text-gray-200">
+                      {delivery?.webhooks?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      fetched {relativeTime(delivery?.webhooks?.fetchedAt)} • persistence {delivery?.webhooks?.persistenceBackend || '—'}
+                    </div>
+                    {delivery?.webhooks?.error ? (
+                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{delivery.webhooks.error}</div>
+                    ) : null}
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(delivery?.webhooks?.endpointReachability || 'unknown')}`}>
+                    {humanizeStatus(delivery?.webhooks?.endpointReachability || 'unknown')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                  <MetricRow label="attempts" value={formatNum(delivery?.webhooks?.totalAttempts, 0)} />
+                  <MetricRow label="delivered" value={formatNum(delivery?.webhooks?.statusCounts?.delivered, 0)} />
+                  <MetricRow label="failed" value={formatNum(delivery?.webhooks?.statusCounts?.failed, 0)} />
+                  <MetricRow label="dead-letter" value={formatNum(delivery?.webhooks?.statusCounts?.deadLettered, 0)} />
+                </div>
+              </div>
+
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="font-mono text-xs text-gray-300 mb-3">RECENT WEBHOOK DELIVERY ATTEMPTS</div>
+                <div className="space-y-2 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                  {delivery?.webhooks?.attempts?.length ? (
+                    delivery.webhooks.attempts.map((attempt) => <WebhookAttemptRow key={attempt.id} attempt={attempt} />)
+                  ) : (
+                    <div className="text-sm text-gray-500 font-mono">
+                      {delivery?.webhooks?.available ? 'No webhook delivery attempts in the current operator window.' : 'Webhook attempts endpoint unavailable.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionShell>
+
+          <SectionShell title="BILLING & SETTLEMENT RECONCILIATION" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
+            <div className="space-y-3">
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-mono text-xs text-gray-300 mb-2">SETTLEMENT RECONCILIATION SUMMARY</div>
+                    <div className="text-sm text-gray-200">
+                      {settlement?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      fetched {relativeTime(settlement?.fetchedAt)} • rpc {settlement?.rpc?.enabled ? 'enabled' : 'disabled'} • checks {formatNum(settlement?.rpc?.checkedTransactions, 0)}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1 break-all">
+                      payTo {settlement?.rpc?.sellerPayToAddress || '—'} • asset {settlement?.rpc?.sellerTokenAddress || '—'}
+                    </div>
+                    {settlement?.error ? (
+                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{settlement.error}</div>
+                    ) : null}
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(settlement?.endpointReachability || 'unknown')}`}>
+                    {humanizeStatus(settlement?.endpointReachability || 'unknown')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                  <MetricRow label="accepted" value={formatNum(settlement?.summary?.acceptedPayments, 0)} />
+                  <MetricRow label="official" value={formatNum(settlement?.summary?.officialAcceptedPayments, 0)} />
+                  <MetricRow label="reconciled" value={formatNum(settlement?.summary?.reconciledPayments, 0)} />
+                  <MetricRow label="failed" value={formatNum(settlement?.summary?.failedOfficialPayments, 0)} />
+                  <MetricRow label="pending" value={formatNum(settlement?.summary?.pendingOrUnverifiedOfficialPayments, 0)} />
+                  <MetricRow label="dup txhash" value={formatNum(settlement?.summary?.duplicateSettlementTxHashes, 0)} />
+                  <MetricRow label="txhash coverage" value={formatPct(settlement?.summary?.txHashCoverageRate, 1)} />
+                  <MetricRow label="receipt confirm" value={formatPct(settlement?.summary?.receiptConfirmationRate, 1)} />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[11px]">
+                  <MetricRow label="accepted rev" value={formatUsd(settlement?.summary?.acceptedRevenueUsdc, 4)} />
+                  <MetricRow label="official rev" value={formatUsd(settlement?.summary?.officialAcceptedRevenueUsdc, 4)} />
+                  <MetricRow label="legacy rev" value={formatUsd(settlement?.summary?.legacyAcceptedRevenueUsdc, 4)} />
+                  <MetricRow label="reconciled rev" value={formatUsd(settlement?.summary?.reconciledRevenueUsdc, 4)} />
+                </div>
+              </div>
+
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="font-mono text-xs text-gray-300 mb-3">RECONCILIATION EXCEPTIONS</div>
+                <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
+                  {settlement?.exceptions?.length ? (
+                    settlement.exceptions.map((item) => <SettlementExceptionRow key={`${item.paymentEventId}-${item.status}-${item.createdAt}`} item={item} />)
+                  ) : (
+                    <div className="text-sm text-gray-500 font-mono">
+                      {settlement?.available ? 'No reconciliation exceptions in the current operator window.' : 'Billing reconciliation endpoint unavailable.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionShell>
+
           </div>
 
           <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
@@ -793,105 +1048,6 @@ export function FactoryView({ runtime }: FactoryViewProps) {
               </div>
             </SectionShell>
           </div>
-
-          <SectionShell title="DELIVERY CHANNELS (WEBHOOKS)" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
-            <div className="space-y-3">
-              <div className="border border-gray-800 rounded p-3 bg-black/20">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <div className="font-mono text-xs text-gray-300 mb-2">WEBHOOK DELIVERY SUMMARY</div>
-                    <div className="text-sm text-gray-200">
-                      {delivery?.webhooks?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
-                    </div>
-                    <div className="text-[11px] text-gray-500 mt-1">
-                      fetched {relativeTime(delivery?.webhooks?.fetchedAt)} • persistence {delivery?.webhooks?.persistenceBackend || '—'}
-                    </div>
-                    {delivery?.webhooks?.error ? (
-                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{delivery.webhooks.error}</div>
-                    ) : null}
-                  </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(delivery?.webhooks?.endpointReachability || 'unknown')}`}>
-                    {humanizeStatus(delivery?.webhooks?.endpointReachability || 'unknown')}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
-                  <MetricRow label="attempts" value={formatNum(delivery?.webhooks?.totalAttempts, 0)} />
-                  <MetricRow label="delivered" value={formatNum(delivery?.webhooks?.statusCounts?.delivered, 0)} />
-                  <MetricRow label="failed" value={formatNum(delivery?.webhooks?.statusCounts?.failed, 0)} />
-                  <MetricRow label="dead-letter" value={formatNum(delivery?.webhooks?.statusCounts?.deadLettered, 0)} />
-                </div>
-              </div>
-
-              <div className="border border-gray-800 rounded p-3 bg-black/20">
-                <div className="font-mono text-xs text-gray-300 mb-3">RECENT WEBHOOK DELIVERY ATTEMPTS</div>
-                <div className="space-y-2 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
-                  {delivery?.webhooks?.attempts?.length ? (
-                    delivery.webhooks.attempts.map((attempt) => <WebhookAttemptRow key={attempt.id} attempt={attempt} />)
-                  ) : (
-                    <div className="text-sm text-gray-500 font-mono">
-                      {delivery?.webhooks?.available ? 'No webhook delivery attempts in the current operator window.' : 'Webhook attempts endpoint unavailable.'}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </SectionShell>
-
-          <SectionShell title="BILLING & SETTLEMENT RECONCILIATION" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
-            <div className="space-y-3">
-              <div className="border border-gray-800 rounded p-3 bg-black/20">
-                <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
-                    <div className="font-mono text-xs text-gray-300 mb-2">SETTLEMENT RECONCILIATION SUMMARY</div>
-                    <div className="text-sm text-gray-200">
-                      {settlement?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
-                    </div>
-                    <div className="text-[11px] text-gray-500 mt-1">
-                      fetched {relativeTime(settlement?.fetchedAt)} • rpc {settlement?.rpc?.enabled ? 'enabled' : 'disabled'} • checks {formatNum(settlement?.rpc?.checkedTransactions, 0)}
-                    </div>
-                    <div className="text-[11px] text-gray-500 mt-1 break-all">
-                      payTo {settlement?.rpc?.sellerPayToAddress || '—'} • asset {settlement?.rpc?.sellerTokenAddress || '—'}
-                    </div>
-                    {settlement?.error ? (
-                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{settlement.error}</div>
-                    ) : null}
-                  </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(settlement?.endpointReachability || 'unknown')}`}>
-                    {humanizeStatus(settlement?.endpointReachability || 'unknown')}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
-                  <MetricRow label="accepted" value={formatNum(settlement?.summary?.acceptedPayments, 0)} />
-                  <MetricRow label="official" value={formatNum(settlement?.summary?.officialAcceptedPayments, 0)} />
-                  <MetricRow label="reconciled" value={formatNum(settlement?.summary?.reconciledPayments, 0)} />
-                  <MetricRow label="failed" value={formatNum(settlement?.summary?.failedOfficialPayments, 0)} />
-                  <MetricRow label="pending" value={formatNum(settlement?.summary?.pendingOrUnverifiedOfficialPayments, 0)} />
-                  <MetricRow label="dup txhash" value={formatNum(settlement?.summary?.duplicateSettlementTxHashes, 0)} />
-                  <MetricRow label="txhash coverage" value={formatPct(settlement?.summary?.txHashCoverageRate, 1)} />
-                  <MetricRow label="receipt confirm" value={formatPct(settlement?.summary?.receiptConfirmationRate, 1)} />
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[11px]">
-                  <MetricRow label="accepted rev" value={formatUsd(settlement?.summary?.acceptedRevenueUsdc, 4)} />
-                  <MetricRow label="official rev" value={formatUsd(settlement?.summary?.officialAcceptedRevenueUsdc, 4)} />
-                  <MetricRow label="legacy rev" value={formatUsd(settlement?.summary?.legacyAcceptedRevenueUsdc, 4)} />
-                  <MetricRow label="reconciled rev" value={formatUsd(settlement?.summary?.reconciledRevenueUsdc, 4)} />
-                </div>
-              </div>
-
-              <div className="border border-gray-800 rounded p-3 bg-black/20">
-                <div className="font-mono text-xs text-gray-300 mb-3">RECONCILIATION EXCEPTIONS</div>
-                <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
-                  {settlement?.exceptions?.length ? (
-                    settlement.exceptions.map((item) => <SettlementExceptionRow key={`${item.paymentEventId}-${item.status}-${item.createdAt}`} item={item} />)
-                  ) : (
-                    <div className="text-sm text-gray-500 font-mono">
-                      {settlement?.available ? 'No reconciliation exceptions in the current operator window.' : 'Billing reconciliation endpoint unavailable.'}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </SectionShell>
 
           <SectionShell title="DATA SOURCES" right={<span className="text-[10px] font-mono text-gray-500">{dataSources.length} sources</span>}>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">
