@@ -510,8 +510,60 @@ export interface FactoryControlPlaneBackupStatus {
   error: string | null;
 }
 
+export interface FactoryProductRuntimePostgresBackupStatus {
+  available: boolean;
+  status: string;
+  rootPath: string | null;
+  latestRunDir: string | null;
+  latestCreatedAt: string | null;
+  latestAgeHours: number | null;
+  stale: boolean;
+  maxAgeHours: number;
+  dumpFilePath: string | null;
+  artifactSizeBytes: number | null;
+  artifactSha256: string | null;
+  manifestPath: string | null;
+  runCount: number;
+  database: string | null;
+  user: string | null;
+  service: string | null;
+  error: string | null;
+}
+
+export interface FactoryProductRuntimeSignalBillingHealthStatus {
+  available: boolean;
+  status: string;
+  stateFile: string | null;
+  historyFile: string | null;
+  historyLineCount: number;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  ageSeconds: number | null;
+  stale: boolean;
+  maxAgeSeconds: number | null;
+  exitCode: number | null;
+  durationMs: number | null;
+  nextRunInSeconds: number | null;
+  runsTotal: number | null;
+  successTotal: number | null;
+  failureTotal: number | null;
+  consecutiveFailures: number | null;
+  baseUrl: string | null;
+  error: string | null;
+}
+
+export interface FactoryProductRuntimeSurvivalSection {
+  available: boolean;
+  endpointReachability: string;
+  fetchedAt: string | null;
+  error: string | null;
+  postgresBackup: FactoryProductRuntimePostgresBackupStatus;
+  signalBillingHealth: FactoryProductRuntimeSignalBillingHealthStatus;
+}
+
 export interface FactoryBackupsSection {
   controlPlane: FactoryControlPlaneBackupStatus;
+  productRuntime: FactoryProductRuntimeSurvivalSection;
 }
 
 export interface FactoryEconomicsSection {

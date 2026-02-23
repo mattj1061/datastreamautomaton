@@ -10,6 +10,7 @@ import { getSynthesisIntegrationConfig } from "../dist/heartbeat/synthesis-integ
 const FACTORY_INTERNAL_SNAPSHOT_PATH = "/v1/internal/factory/snapshot";
 const FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH = "/v1/internal/signals/webhooks/delivery-attempts";
 const FACTORY_INTERNAL_BILLING_RECONCILIATION_PATH = "/v1/internal/billing/reconciliation";
+const FACTORY_INTERNAL_RUNTIME_SURVIVAL_PATH = "/v1/internal/ops/runtime-survival";
 const FACTORY_WEBHOOK_ATTEMPTS_LIMIT = 25;
 const FACTORY_BILLING_RECONCILIATION_DAYS = 7;
 const FACTORY_BILLING_RECONCILIATION_SCAN_LIMIT = 5000;
@@ -521,6 +522,57 @@ function buildInternalWebhookAttemptsUrl(baseUrl) {
   return `${trimmed}${FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH}?limit=${FACTORY_WEBHOOK_ATTEMPTS_LIMIT}`;
 }
 
+function normalizeRuntimeSurvivalSnapshot(payload) {
+  if (!isRecord(payload)) {
+    throw new Error("Runtime survival response is not an object.");
+  }
+  const backupRaw = isRecord(payload.postgresBackup) ? payload.postgresBackup : {};
+  const healthRaw = isRecord(payload.signalBillingHealth) ? payload.signalBillingHealth : {};
+  return {
+    generatedAt: toIso(payload.generatedAt) || new Date().toISOString(),
+    postgresBackup: {
+      available: Boolean(backupRaw.available),
+      status: asString(backupRaw.status, "unknown"),
+      rootPath: asString(backupRaw.rootPath, null),
+      latestRunDir: asString(backupRaw.latestRunDir, null),
+      latestCreatedAt: toIso(backupRaw.latestCreatedAt),
+      latestAgeHours: asFiniteNumber(backupRaw.latestAgeHours, null),
+      stale: Boolean(backupRaw.stale),
+      maxAgeHours: asFiniteNumber(backupRaw.maxAgeHours, 24),
+      dumpFilePath: asString(backupRaw.dumpFilePath, null),
+      artifactSizeBytes: asFiniteNumber(backupRaw.artifactSizeBytes, null),
+      artifactSha256: asString(backupRaw.artifactSha256, null),
+      manifestPath: asString(backupRaw.manifestPath, null),
+      runCount: Math.max(0, Math.floor(asFiniteNumber(backupRaw.runCount, 0) || 0)),
+      database: asString(backupRaw.database, null),
+      user: asString(backupRaw.user, null),
+      service: asString(backupRaw.service, null),
+      error: asString(backupRaw.error, null),
+    },
+    signalBillingHealth: {
+      available: Boolean(healthRaw.available),
+      status: asString(healthRaw.status, "unknown"),
+      stateFile: asString(healthRaw.stateFile, null),
+      historyFile: asString(healthRaw.historyFile, null),
+      historyLineCount: Math.max(0, Math.floor(asFiniteNumber(healthRaw.historyLineCount, 0) || 0)),
+      lastStartedAt: toIso(healthRaw.lastStartedAt),
+      lastFinishedAt: toIso(healthRaw.lastFinishedAt),
+      ageSeconds: asFiniteNumber(healthRaw.ageSeconds, null),
+      stale: Boolean(healthRaw.stale),
+      maxAgeSeconds: asFiniteNumber(healthRaw.maxAgeSeconds, null),
+      exitCode: asFiniteNumber(healthRaw.exitCode, null),
+      durationMs: asFiniteNumber(healthRaw.durationMs, null),
+      nextRunInSeconds: asFiniteNumber(healthRaw.nextRunInSeconds, null),
+      runsTotal: asFiniteNumber(healthRaw.runsTotal, null),
+      successTotal: asFiniteNumber(healthRaw.successTotal, null),
+      failureTotal: asFiniteNumber(healthRaw.failureTotal, null),
+      consecutiveFailures: asFiniteNumber(healthRaw.consecutiveFailures, null),
+      baseUrl: asString(healthRaw.baseUrl, null),
+      error: asString(healthRaw.error, null),
+    },
+  };
+}
+
 function buildInternalBillingReconciliationUrl(baseUrl) {
   if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
     throw new Error("Missing synthesis product API base URL.");
@@ -817,6 +869,7 @@ function buildFactoryDataSources({
   cacheInfo,
   usedCachedProductSnapshot,
   controlPlaneBackup,
+  runtimeSurvivalFetch,
 }) {
   const dataSources = [];
   dataSources.push({
@@ -915,6 +968,21 @@ function buildFactoryDataSources({
       ? `Latest control-plane backup ${controlPlaneBackup.stale ? "is stale" : "is fresh"} (${controlPlaneBackup.latestCreatedAt || "unknown time"})`
       : "Control-plane backups missing or unavailable",
     error: controlPlaneBackup?.error || null,
+  });
+
+  dataSources.push({
+    name: "product_service_internal_runtime_survival",
+    status: runtimeSurvivalFetch?.success ? "ok" : "degraded",
+    reachable: Boolean(runtimeSurvivalFetch?.success),
+    stale: false,
+    staleAgeSeconds: null,
+    used: Boolean(runtimeSurvivalFetch?.success),
+    lastFetchedAt: runtimeSurvivalFetch?.fetchedAt || null,
+    path: runtimeSurvivalFetch?.url || null,
+    message: runtimeSurvivalFetch?.success
+      ? "Product runtime survival telemetry loaded"
+      : "Product runtime survival endpoint unavailable (optional)",
+    error: runtimeSurvivalFetch?.success ? null : (runtimeSurvivalFetch?.error || null),
   });
 
   if (cacheInfo) {
@@ -1051,7 +1119,7 @@ function normalizeAutonomySection({ integration, kv, economics }) {
   };
 }
 
-function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, settlement, backups, productFetch, webhookAttemptsFetch, billingReconciliationFetch, usedCachedProductSnapshot, kvErrors }) {
+function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, settlement, backups, productFetch, webhookAttemptsFetch, billingReconciliationFetch, runtimeSurvivalFetch, usedCachedProductSnapshot, kvErrors }) {
   const alerts = [];
   const nowIso = new Date().toISOString();
 
@@ -1334,6 +1402,66 @@ function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics
   }
 
   const controlPlaneBackup = backups?.controlPlane || null;
+  const productRuntimeBackups = backups?.productRuntime || null;
+  if (runtimeSurvivalFetch && runtimeSurvivalFetch.success === false && integration.enabled) {
+    pushAlert(
+      "product_runtime_survival_endpoint_unavailable",
+      "info",
+      "Product runtime survival endpoint is unavailable; backup/health loop visibility is reduced.",
+      {
+        relatedEntity: { type: "ops", id: "runtime_survival" },
+        details: { error: runtimeSurvivalFetch.error || null },
+      },
+    );
+  }
+  const productPostgresBackup = productRuntimeBackups?.postgresBackup || null;
+  if (productPostgresBackup && productRuntimeBackups?.available) {
+    if (!productPostgresBackup.available) {
+      pushAlert(
+        "product_runtime_postgres_backup_missing",
+        "medium",
+        "Product runtime Postgres backup is missing.",
+        { relatedEntity: { type: "backup", id: "product_postgres" }, details: { error: productPostgresBackup.error || null } },
+      );
+    } else if (productPostgresBackup.stale) {
+      pushAlert(
+        "product_runtime_postgres_backup_stale",
+        "medium",
+        `Product runtime Postgres backup is stale (${round(productPostgresBackup.latestAgeHours ?? 0, 2)}h > ${round(productPostgresBackup.maxAgeHours ?? 24, 2)}h).`,
+        { relatedEntity: { type: "backup", id: "product_postgres" } },
+      );
+    }
+  }
+  const productSignalHealth = productRuntimeBackups?.signalBillingHealth || null;
+  if (productSignalHealth && productRuntimeBackups?.available) {
+    if (!productSignalHealth.available) {
+      pushAlert(
+        "product_runtime_x402_health_loop_missing",
+        "medium",
+        "Product runtime x402 health loop status is missing.",
+        { relatedEntity: { type: "health_check", id: "signal_billing" }, details: { error: productSignalHealth.error || null } },
+      );
+    } else {
+      if (productSignalHealth.stale) {
+        pushAlert(
+          "product_runtime_x402_health_loop_stale",
+          "medium",
+          `Product runtime x402 health loop status is stale (${round((productSignalHealth.ageSeconds ?? 0) / 60, 2)}m old).`,
+          { relatedEntity: { type: "health_check", id: "signal_billing" } },
+        );
+      }
+      if (String(productSignalHealth.status || "").toLowerCase() === "failed") {
+        const sev = (asFiniteNumber(productSignalHealth.consecutiveFailures, 0) || 0) >= 3 ? "high" : "medium";
+        pushAlert(
+          "product_runtime_x402_health_loop_failed",
+          sev,
+          `Product runtime x402 health loop last run failed (exit ${productSignalHealth.exitCode ?? "?"}).`,
+          { relatedEntity: { type: "health_check", id: "signal_billing" } },
+        );
+      }
+    }
+  }
+
   if (!controlPlaneBackup || !controlPlaneBackup.available) {
     pushAlert(
       "control_plane_backup_missing",
@@ -1550,6 +1678,9 @@ export async function handleGetFactorySnapshot() {
     const billingReconciliationFetch = integration.enabled
       ? await tryLoadProductServiceBillingReconciliation(integration)
       : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled" };
+    const runtimeSurvivalFetch = integration.enabled
+      ? await tryLoadProductServiceRuntimeSurvival(integration)
+      : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled" };
     const cacheInfo = getCachedProductSnapshot();
     const usedCachedProductSnapshot = Boolean(productFetch.cacheUsed === true);
     const productSnapshot = productFetch.snapshot || null;
@@ -1698,6 +1829,7 @@ export async function handleGetFactorySnapshot() {
     };
 
     const billingReconciliationSnapshot = billingReconciliationFetch.success ? billingReconciliationFetch.snapshot : null;
+    const runtimeSurvivalSnapshot = runtimeSurvivalFetch.success ? runtimeSurvivalFetch.snapshot : null;
     const settlementEvents = Array.isArray(billingReconciliationSnapshot?.events)
       ? billingReconciliationSnapshot.events.map((event) => ({
           paymentEventId: asString(event.paymentEventId, "unknown-payment-event"),
@@ -1771,6 +1903,52 @@ export async function handleGetFactorySnapshot() {
 
     const backupsSection = {
       controlPlane: readControlPlaneBackupStatus(),
+      productRuntime: {
+        available: Boolean(runtimeSurvivalFetch.success),
+        endpointReachability: runtimeSurvivalFetch.success ? "connected" : "degraded",
+        fetchedAt: runtimeSurvivalFetch.fetchedAt || null,
+        error: runtimeSurvivalFetch.success ? null : (runtimeSurvivalFetch.error || null),
+        postgresBackup: runtimeSurvivalSnapshot?.postgresBackup || {
+          available: false,
+          status: "missing",
+          rootPath: null,
+          latestRunDir: null,
+          latestCreatedAt: null,
+          latestAgeHours: null,
+          stale: false,
+          maxAgeHours: 24,
+          dumpFilePath: null,
+          artifactSizeBytes: null,
+          artifactSha256: null,
+          manifestPath: null,
+          runCount: 0,
+          database: null,
+          user: null,
+          service: null,
+          error: runtimeSurvivalFetch.success ? null : (runtimeSurvivalFetch.error || null),
+        },
+        signalBillingHealth: runtimeSurvivalSnapshot?.signalBillingHealth || {
+          available: false,
+          status: "missing",
+          stateFile: null,
+          historyFile: null,
+          historyLineCount: 0,
+          lastStartedAt: null,
+          lastFinishedAt: null,
+          ageSeconds: null,
+          stale: false,
+          maxAgeSeconds: null,
+          exitCode: null,
+          durationMs: null,
+          nextRunInSeconds: null,
+          runsTotal: null,
+          successTotal: null,
+          failureTotal: null,
+          consecutiveFailures: null,
+          baseUrl: null,
+          error: runtimeSurvivalFetch.success ? null : (runtimeSurvivalFetch.error || null),
+        },
+      },
     };
 
     const stages = Array.isArray(productSnapshot?.pipeline?.stages) && productSnapshot.pipeline.stages.length > 0
@@ -1862,6 +2040,7 @@ export async function handleGetFactorySnapshot() {
       productFetch,
       webhookAttemptsFetch,
       billingReconciliationFetch,
+      runtimeSurvivalFetch,
       usedCachedProductSnapshot,
       kvErrors,
     });
@@ -1881,6 +2060,7 @@ export async function handleGetFactorySnapshot() {
       cacheInfo,
       usedCachedProductSnapshot,
       controlPlaneBackup: backupsSection.controlPlane,
+      runtimeSurvivalFetch,
     });
 
     const mode = !integration.enabled

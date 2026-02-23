@@ -614,6 +614,13 @@ export function FactoryView({ runtime }: FactoryViewProps) {
     ? (controlPlaneBackup?.stale ? 'stale' : (controlPlaneBackup?.status || 'ok'))
     : (controlPlaneBackup?.status || 'degraded');
 
+  const productRuntimeSurvival = backups?.productRuntime;
+  const productRuntimeBackup = productRuntimeSurvival?.postgresBackup;
+  const productRuntimeSignalHealth = productRuntimeSurvival?.signalBillingHealth;
+  const productRuntimeSurvivalStatus = productRuntimeSurvival?.available ? (productRuntimeSurvival.endpointReachability || 'connected') : 'degraded';
+  const productRuntimeBackupStatus = productRuntimeBackup?.available ? (productRuntimeBackup?.stale ? 'stale' : (productRuntimeBackup?.status || 'ok')) : (productRuntimeBackup?.status || 'degraded');
+  const productRuntimeSignalHealthStatus = productRuntimeSignalHealth?.available ? (productRuntimeSignalHealth?.stale ? 'stale' : (productRuntimeSignalHealth?.status || 'ok')) : (productRuntimeSignalHealth?.status || 'degraded');
+
   return (
     <div className="h-full flex flex-col p-8 pt-12 animate-fade-in overflow-y-auto custom-scrollbar gap-6">
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
@@ -1025,6 +1032,64 @@ export function FactoryView({ runtime }: FactoryViewProps) {
                     </div>
                     <div className="pt-1 text-gray-500">
                       Wallet material and Vultisig shares are intentionally excluded from the control-plane backup snapshot.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-1">
+                <div className="border border-gray-800 rounded p-3 bg-black/20">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="font-mono text-xs text-gray-300 mb-2">PRODUCT RUNTIME (REPO B) SURVIVAL</div>
+                      <div className="text-sm text-gray-200">
+                        {productRuntimeSurvival?.available ? 'Internal ops endpoint connected' : 'Internal ops endpoint unavailable'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        fetched {relativeTime(productRuntimeSurvival?.fetchedAt)} • endpoint {humanizeStatus(productRuntimeSurvivalStatus)}
+                      </div>
+                      {productRuntimeSurvival?.error ? (
+                        <div className="text-[11px] text-yellow-200 mt-2 break-words">{productRuntimeSurvival.error}</div>
+                      ) : null}
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(productRuntimeSurvivalStatus)}`}>
+                      {humanizeStatus(productRuntimeSurvivalStatus)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                    <MetricRow label="pg backup" value={humanizeStatus(productRuntimeBackupStatus)} />
+                    <MetricRow label="pg age" value={formatMaybeHours(productRuntimeBackup?.latestAgeHours)} />
+                    <MetricRow label="x402 loop" value={humanizeStatus(productRuntimeSignalHealthStatus)} />
+                    <MetricRow label="loop age" value={formatMaybeSeconds(productRuntimeSignalHealth?.ageSeconds)} />
+                    <MetricRow label="loop next" value={formatMaybeSeconds(productRuntimeSignalHealth?.nextRunInSeconds)} />
+                    <MetricRow label="loop fails" value={formatNum(productRuntimeSignalHealth?.consecutiveFailures, 0)} />
+                    <MetricRow label="loop runs" value={formatNum(productRuntimeSignalHealth?.runsTotal, 0)} />
+                    <MetricRow label="history rows" value={formatNum(productRuntimeSignalHealth?.historyLineCount, 0)} />
+                  </div>
+                </div>
+                <div className="border border-gray-800 rounded p-3 bg-black/20">
+                  <div className="font-mono text-xs text-gray-300 mb-2">PRODUCT RUNTIME ARTIFACTS & CHECK FILES</div>
+                  <div className="space-y-2 text-[11px]">
+                    <div>
+                      <div className="text-gray-500">postgres backup root</div>
+                      <div className="text-gray-300 break-all">{productRuntimeBackup?.rootPath || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">latest postgres backup dump</div>
+                      <div className="text-gray-300 break-all">{productRuntimeBackup?.dumpFilePath || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">x402 health state file</div>
+                      <div className="text-gray-300 break-all">{productRuntimeSignalHealth?.stateFile || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">x402 health history file</div>
+                      <div className="text-gray-300 break-all">{productRuntimeSignalHealth?.historyFile || '—'}</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <MetricRow label="pg dump size" value={formatBytes(productRuntimeBackup?.artifactSizeBytes)} />
+                      <MetricRow label="x402 base url" value={productRuntimeSignalHealth?.baseUrl || '—'} />
+                      <MetricRow label="loop exit" value={productRuntimeSignalHealth?.exitCode == null ? '—' : String(productRuntimeSignalHealth.exitCode)} />
+                      <MetricRow label="loop dur" value={formatMaybeMs(productRuntimeSignalHealth?.durationMs)} />
                     </div>
                   </div>
                 </div>
