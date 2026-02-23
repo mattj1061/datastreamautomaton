@@ -421,6 +421,75 @@ export interface FactoryDeliverySection {
   webhooks: FactoryWebhookDeliverySection;
 }
 
+export interface FactorySettlementReconciliationEvent {
+  paymentEventId: string;
+  createdAt: string;
+  customerId: string;
+  productId: string;
+  accessMode: string;
+  amountUsdc: number | null;
+  requiredAmountUsdc: number | null;
+  verificationMethod: string;
+  transactionRef: string;
+  verificationProofRef: string | null;
+  settlementTxHash: string | null;
+  status: string;
+  flags: string[];
+  reason: string | null;
+  receipt: {
+    txHash: string;
+    found: boolean;
+    status: string | null;
+    blockNumber: number | null;
+    tokenTransferMatched: boolean | null;
+    tokenTransferAmountAtomic: string | null;
+    assetAddressMatched: boolean | null;
+    payToAddressMatched: boolean | null;
+  } | null;
+}
+
+export interface FactorySettlementReconciliationException {
+  paymentEventId: string;
+  createdAt: string;
+  productId: string;
+  status: string;
+  flags: string[];
+  settlementTxHash: string | null;
+  reason: string | null;
+}
+
+export interface FactorySettlementReconciliationSection {
+  available: boolean;
+  endpointReachability: string;
+  fetchedAt: string | null;
+  error: string | null;
+  rpc: {
+    enabled: boolean;
+    urlConfigured: boolean;
+    tokenDecimals: number | null;
+    sellerPayToAddress: string | null;
+    sellerTokenAddress: string | null;
+    checkedTransactions: number;
+  };
+  summary: {
+    acceptedPayments: number;
+    acceptedRevenueUsdc: number | null;
+    officialAcceptedPayments: number;
+    officialAcceptedRevenueUsdc: number | null;
+    legacyAcceptedPayments: number;
+    legacyAcceptedRevenueUsdc: number | null;
+    reconciledPayments: number;
+    reconciledRevenueUsdc: number | null;
+    pendingOrUnverifiedOfficialPayments: number;
+    failedOfficialPayments: number;
+    duplicateSettlementTxHashes: number;
+    txHashCoverageRate: number | null;
+    receiptConfirmationRate: number | null;
+  };
+  exceptions: FactorySettlementReconciliationException[];
+  events: FactorySettlementReconciliationEvent[];
+}
+
 export interface FactoryEconomicsSection {
   revenuePerDay: number | null;
   costPerDay: number | null;
@@ -485,6 +554,7 @@ export interface FactorySnapshot {
   pipeline: FactoryPipelineSection;
   outputs: FactoryOutputsSection;
   delivery: FactoryDeliverySection;
+  settlement: FactorySettlementReconciliationSection;
   economics: FactoryEconomicsSection;
   autonomy: FactoryAutonomySection;
   alerts: FactoryAlert[];

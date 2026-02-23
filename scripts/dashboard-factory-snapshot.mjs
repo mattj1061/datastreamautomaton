@@ -6,7 +6,11 @@ import { getSynthesisIntegrationConfig } from "../dist/heartbeat/synthesis-integ
 
 const FACTORY_INTERNAL_SNAPSHOT_PATH = "/v1/internal/factory/snapshot";
 const FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH = "/v1/internal/signals/webhooks/delivery-attempts";
+const FACTORY_INTERNAL_BILLING_RECONCILIATION_PATH = "/v1/internal/billing/reconciliation";
 const FACTORY_WEBHOOK_ATTEMPTS_LIMIT = 25;
+const FACTORY_BILLING_RECONCILIATION_DAYS = 7;
+const FACTORY_BILLING_RECONCILIATION_SCAN_LIMIT = 5000;
+const FACTORY_BILLING_RECONCILIATION_EVENT_LIMIT = 20;
 const FACTORY_PRODUCT_SNAPSHOT_CACHE_TTL_MS = 60_000;
 const FACTORY_REQUIRED_STREAM_FAMILIES = [
   "market_microstructure",
@@ -307,6 +311,87 @@ function normalizeWebhookAttemptsSnapshot(payload) {
   };
 }
 
+function normalizeBillingReconciliationSnapshot(payload) {
+  if (!isRecord(payload)) {
+    throw new Error("Billing reconciliation response is not an object.");
+  }
+
+  const summaryRaw = isRecord(payload.summary) ? payload.summary : {};
+  const rpcRaw = isRecord(payload.rpc) ? payload.rpc : {};
+  const exceptionsRaw = Array.isArray(payload.exceptions) ? payload.exceptions : [];
+  const eventsRaw = Array.isArray(payload.events) ? payload.events : [];
+
+  return {
+    generatedAt: toIso(payload.generatedAt) || new Date().toISOString(),
+    window: {
+      days: asFiniteNumber(payload.window?.days, null),
+      scanLimit: asFiniteNumber(payload.window?.scanLimit, null),
+      eventLimit: asFiniteNumber(payload.window?.eventLimit, null),
+    },
+    rpc: {
+      enabled: Boolean(rpcRaw.enabled),
+      urlConfigured: Boolean(rpcRaw.urlConfigured),
+      tokenDecimals: asFiniteNumber(rpcRaw.tokenDecimals, null),
+      sellerPayToAddress: asString(rpcRaw.sellerPayToAddress, null),
+      sellerTokenAddress: asString(rpcRaw.sellerTokenAddress, null),
+      checkedTransactions: Math.max(0, Math.floor(asFiniteNumber(rpcRaw.checkedTransactions, 0) || 0)),
+    },
+    summary: {
+      acceptedPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.acceptedPayments, 0) || 0)),
+      acceptedRevenueUsdc: asFiniteNumber(summaryRaw.acceptedRevenueUsdc, null),
+      officialAcceptedPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.officialAcceptedPayments, 0) || 0)),
+      officialAcceptedRevenueUsdc: asFiniteNumber(summaryRaw.officialAcceptedRevenueUsdc, null),
+      legacyAcceptedPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.legacyAcceptedPayments, 0) || 0)),
+      legacyAcceptedRevenueUsdc: asFiniteNumber(summaryRaw.legacyAcceptedRevenueUsdc, null),
+      reconciledPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.reconciledPayments, 0) || 0)),
+      reconciledRevenueUsdc: asFiniteNumber(summaryRaw.reconciledRevenueUsdc, null),
+      pendingOrUnverifiedOfficialPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.pendingOrUnverifiedOfficialPayments, 0) || 0)),
+      failedOfficialPayments: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.failedOfficialPayments, 0) || 0)),
+      duplicateSettlementTxHashes: Math.max(0, Math.floor(asFiniteNumber(summaryRaw.duplicateSettlementTxHashes, 0) || 0)),
+      txHashCoverageRate: asFiniteNumber(summaryRaw.txHashCoverageRate, null),
+      receiptConfirmationRate: asFiniteNumber(summaryRaw.receiptConfirmationRate, null),
+    },
+    exceptions: exceptionsRaw.filter(isRecord).map((item) => ({
+      paymentEventId: asString(item.paymentEventId, "unknown-payment-event"),
+      createdAt: toIso(item.createdAt),
+      productId: asString(item.productId, "unknown-product"),
+      status: asString(item.status, "unknown"),
+      flags: Array.isArray(item.flags) ? item.flags.map((f) => String(f)) : [],
+      settlementTxHash: asString(item.settlementTxHash, null),
+      reason: asString(item.reason, null),
+    })),
+    events: eventsRaw.filter(isRecord).map((item) => {
+      const receipt = isRecord(item.receipt) ? item.receipt : null;
+      return {
+        paymentEventId: asString(item.paymentEventId, "unknown-payment-event"),
+        createdAt: toIso(item.createdAt),
+        customerId: asString(item.customerId, "unknown-customer"),
+        productId: asString(item.productId, "unknown-product"),
+        accessMode: asString(item.accessMode, "unknown"),
+        amountUsdc: asFiniteNumber(item.amountUsdc, null),
+        requiredAmountUsdc: asFiniteNumber(item.requiredAmountUsdc, null),
+        verificationMethod: asString(item.verificationMethod, "unknown"),
+        transactionRef: asString(item.transactionRef, ""),
+        verificationProofRef: asString(item.verificationProofRef, null),
+        settlementTxHash: asString(item.settlementTxHash, null),
+        status: asString(item.status, "unknown"),
+        flags: Array.isArray(item.flags) ? item.flags.map((f) => String(f)) : [],
+        reason: asString(item.reason, null),
+        receipt: receipt ? {
+          txHash: asString(receipt.txHash, ""),
+          found: Boolean(receipt.found),
+          status: asString(receipt.status, null),
+          blockNumber: asFiniteNumber(receipt.blockNumber, null),
+          tokenTransferMatched: typeof receipt.tokenTransferMatched === "boolean" ? receipt.tokenTransferMatched : null,
+          tokenTransferAmountAtomic: asString(receipt.tokenTransferAmountAtomic, null),
+          assetAddressMatched: typeof receipt.assetAddressMatched === "boolean" ? receipt.assetAddressMatched : null,
+          payToAddressMatched: typeof receipt.payToAddressMatched === "boolean" ? receipt.payToAddressMatched : null,
+        } : null,
+      };
+    }),
+  };
+}
+
 function buildInternalFactorySnapshotUrl(baseUrl) {
   if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
     throw new Error("Missing synthesis product API base URL.");
@@ -321,6 +406,21 @@ function buildInternalWebhookAttemptsUrl(baseUrl) {
   }
   const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   return `${trimmed}${FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH}?limit=${FACTORY_WEBHOOK_ATTEMPTS_LIMIT}`;
+}
+
+function buildInternalBillingReconciliationUrl(baseUrl) {
+  if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
+    throw new Error("Missing synthesis product API base URL.");
+  }
+  const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const params = new URLSearchParams({
+    days: String(FACTORY_BILLING_RECONCILIATION_DAYS),
+    limit: String(FACTORY_BILLING_RECONCILIATION_SCAN_LIMIT),
+    eventLimit: String(FACTORY_BILLING_RECONCILIATION_EVENT_LIMIT),
+    includeEvents: "true",
+    rpc: "true",
+  });
+  return `${trimmed}${FACTORY_INTERNAL_BILLING_RECONCILIATION_PATH}?${params.toString()}`;
 }
 
 async function fetchJsonWithTimeout(url, init, timeoutMs) {
@@ -380,6 +480,27 @@ async function fetchFactoryWebhookDeliveryAttempts(integration) {
     url,
     fetchedAt: new Date().toISOString(),
     snapshot: normalizeWebhookAttemptsSnapshot(payload),
+  };
+}
+
+async function fetchFactoryBillingReconciliation(integration) {
+  const url = buildInternalBillingReconciliationUrl(integration.apiBaseUrl);
+  const timeoutMs = Math.max(1500, Math.min(20_000, Number(integration.requestTimeoutMs || 10_000)));
+  const payload = await fetchJsonWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        "x-internal-token": integration.internalToken || "",
+      },
+    },
+    timeoutMs,
+  );
+
+  return {
+    url,
+    fetchedAt: new Date().toISOString(),
+    snapshot: normalizeBillingReconciliationSnapshot(payload),
   };
 }
 
@@ -579,6 +700,7 @@ function buildFactoryDataSources({
   kvErrors,
   productFetch,
   webhookAttemptsFetch,
+  billingReconciliationFetch,
   cacheInfo,
   usedCachedProductSnapshot,
 }) {
@@ -647,6 +769,21 @@ function buildFactoryDataSources({
       ? `Webhook delivery attempts loaded (${webhookAttemptsFetch.snapshot?.total ?? 0} records)`
       : "Webhook delivery attempts endpoint unavailable (optional)",
     error: webhookAttemptsFetch?.success ? null : (webhookAttemptsFetch?.error || null),
+  });
+
+  dataSources.push({
+    name: "product_service_internal_billing_reconciliation",
+    status: billingReconciliationFetch?.success ? "ok" : "degraded",
+    reachable: Boolean(billingReconciliationFetch?.success),
+    stale: false,
+    staleAgeSeconds: null,
+    used: Boolean(billingReconciliationFetch?.success),
+    lastFetchedAt: billingReconciliationFetch?.fetchedAt || null,
+    path: billingReconciliationFetch?.url || null,
+    message: billingReconciliationFetch?.success
+      ? `Billing reconciliation loaded (${billingReconciliationFetch.snapshot?.summary?.acceptedPayments ?? 0} accepted / ${billingReconciliationFetch.snapshot?.summary?.reconciledPayments ?? 0} reconciled)`
+      : "Billing reconciliation endpoint unavailable (optional)",
+    error: billingReconciliationFetch?.success ? null : (billingReconciliationFetch?.error || null),
   });
 
   if (cacheInfo) {
@@ -783,7 +920,7 @@ function normalizeAutonomySection({ integration, kv, economics }) {
   };
 }
 
-function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, productFetch, webhookAttemptsFetch, usedCachedProductSnapshot, kvErrors }) {
+function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, settlement, productFetch, webhookAttemptsFetch, billingReconciliationFetch, usedCachedProductSnapshot, kvErrors }) {
   const alerts = [];
   const nowIso = new Date().toISOString();
 
@@ -979,6 +1116,92 @@ function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics
     );
   }
 
+  const settlementSummary = isRecord(settlement?.summary) ? settlement.summary : null;
+  const settlementRpc = isRecord(settlement?.rpc) ? settlement.rpc : null;
+  const officialAcceptedPayments = asFiniteNumber(settlementSummary?.officialAcceptedPayments, 0) || 0;
+  const failedOfficialPayments = asFiniteNumber(settlementSummary?.failedOfficialPayments, 0) || 0;
+  const pendingUnverifiedOfficialPayments = asFiniteNumber(settlementSummary?.pendingOrUnverifiedOfficialPayments, 0) || 0;
+  const duplicateSettlementTxHashes = asFiniteNumber(settlementSummary?.duplicateSettlementTxHashes, 0) || 0;
+  const txHashCoverageRate = asFiniteNumber(settlementSummary?.txHashCoverageRate, null);
+  const receiptConfirmationRate = asFiniteNumber(settlementSummary?.receiptConfirmationRate, null);
+
+  if (billingReconciliationFetch && billingReconciliationFetch.success === false && integration.enabled) {
+    pushAlert(
+      "billing_reconciliation_endpoint_unavailable",
+      "info",
+      "Billing reconciliation operator endpoint is unavailable; settlement visibility is reduced.",
+      {
+        relatedEntity: { type: "billing", id: "reconciliation" },
+        details: { error: billingReconciliationFetch.error || null },
+      },
+    );
+  }
+  if (failedOfficialPayments > 0) {
+    pushAlert(
+      "settlement_reconciliation_failures_present",
+      "high",
+      `Settlement reconciliation failures detected: ${failedOfficialPayments} official payment(s).`,
+      {
+        relatedEntity: { type: "billing", id: "settlement_reconciliation" },
+        details: { failedOfficialPayments },
+      },
+    );
+  }
+  if (pendingUnverifiedOfficialPayments > 0) {
+    pushAlert(
+      "settlement_reconciliation_pending_or_unverified",
+      "medium",
+      `Official payments pending/unverified in settlement reconciliation: ${pendingUnverifiedOfficialPayments}.`,
+      {
+        relatedEntity: { type: "billing", id: "settlement_reconciliation" },
+        details: { pendingUnverifiedOfficialPayments },
+      },
+    );
+  }
+  if (duplicateSettlementTxHashes > 0) {
+    pushAlert(
+      "duplicate_settlement_tx_hashes_detected",
+      "high",
+      `Duplicate settlement transaction hashes detected: ${duplicateSettlementTxHashes}.`,
+      {
+        relatedEntity: { type: "billing", id: "settlement_reconciliation" },
+        details: { duplicateSettlementTxHashes },
+      },
+    );
+  }
+  if (officialAcceptedPayments > 0 && txHashCoverageRate != null && txHashCoverageRate < 1) {
+    pushAlert(
+      "official_payment_txhash_coverage_incomplete",
+      txHashCoverageRate < 0.9 ? "medium" : "info",
+      `Official payment settlement tx hash coverage is ${(txHashCoverageRate * 100).toFixed(1)}%.`,
+      {
+        relatedEntity: { type: "billing", id: "settlement_reconciliation" },
+        details: { txHashCoverageRate },
+      },
+    );
+  }
+  if (officialAcceptedPayments > 0 && settlementRpc && !Boolean(settlementRpc.enabled)) {
+    pushAlert(
+      "settlement_rpc_checks_disabled",
+      "info",
+      "Official x402 payments detected but RPC receipt checks are disabled/unconfigured in billing reconciliation.",
+      {
+        relatedEntity: { type: "billing", id: "settlement_rpc" },
+      },
+    );
+  }
+  if (officialAcceptedPayments > 0 && settlementRpc && Boolean(settlementRpc.enabled) && receiptConfirmationRate != null && receiptConfirmationRate < 1) {
+    pushAlert(
+      "settlement_receipt_confirmation_incomplete",
+      receiptConfirmationRate < 0.9 ? "medium" : "info",
+      `Settlement receipt confirmation rate is ${(receiptConfirmationRate * 100).toFixed(1)}% for official payments.`,
+      {
+        relatedEntity: { type: "billing", id: "settlement_reconciliation" },
+        details: { receiptConfirmationRate },
+      },
+    );
+  }
+
   const severityRank = { high: 0, medium: 1, info: 2, low: 3 };
   alerts.sort((a, b) => {
     const r = (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9);
@@ -1097,6 +1320,37 @@ async function tryLoadProductServiceWebhookAttempts(integration) {
   }
 }
 
+async function tryLoadProductServiceBillingReconciliation(integration) {
+  const result = {
+    success: false,
+    url: null,
+    fetchedAt: null,
+    snapshot: null,
+    error: null,
+  };
+
+  try {
+    const fetched = await fetchFactoryBillingReconciliation(integration);
+    return {
+      success: true,
+      url: fetched.url,
+      fetchedAt: fetched.fetchedAt,
+      snapshot: fetched.snapshot,
+      error: null,
+    };
+  } catch (error) {
+    result.url = (() => {
+      try {
+        return buildInternalBillingReconciliationUrl(integration.apiBaseUrl);
+      } catch {
+        return null;
+      }
+    })();
+    result.error = error instanceof Error ? error.message : String(error);
+    return result;
+  }
+}
+
 export async function handleGetFactorySnapshot() {
   const started = performance.now();
   const config = loadConfig();
@@ -1131,6 +1385,9 @@ export async function handleGetFactorySnapshot() {
       : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled", cacheUsed: false };
     const webhookAttemptsFetch = integration.enabled
       ? await tryLoadProductServiceWebhookAttempts(integration)
+      : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled" };
+    const billingReconciliationFetch = integration.enabled
+      ? await tryLoadProductServiceBillingReconciliation(integration)
       : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled" };
     const cacheInfo = getCachedProductSnapshot();
     const usedCachedProductSnapshot = Boolean(productFetch.cacheUsed === true);
@@ -1279,6 +1536,78 @@ export async function handleGetFactorySnapshot() {
       },
     };
 
+    const billingReconciliationSnapshot = billingReconciliationFetch.success ? billingReconciliationFetch.snapshot : null;
+    const settlementEvents = Array.isArray(billingReconciliationSnapshot?.events)
+      ? billingReconciliationSnapshot.events.map((event) => ({
+          paymentEventId: asString(event.paymentEventId, "unknown-payment-event"),
+          createdAt: toIso(event.createdAt),
+          customerId: asString(event.customerId, "unknown-customer"),
+          productId: asString(event.productId, "unknown-product"),
+          accessMode: asString(event.accessMode, "unknown"),
+          amountUsdc: asFiniteNumber(event.amountUsdc, null),
+          requiredAmountUsdc: asFiniteNumber(event.requiredAmountUsdc, null),
+          verificationMethod: asString(event.verificationMethod, "unknown"),
+          transactionRef: asString(event.transactionRef, ""),
+          verificationProofRef: asString(event.verificationProofRef, null),
+          settlementTxHash: asString(event.settlementTxHash, null),
+          status: asString(event.status, "unknown"),
+          flags: Array.isArray(event.flags) ? event.flags.map((f) => String(f)) : [],
+          reason: asString(event.reason, null),
+          receipt: isRecord(event.receipt) ? {
+            txHash: asString(event.receipt.txHash, ""),
+            found: Boolean(event.receipt.found),
+            status: asString(event.receipt.status, null),
+            blockNumber: asFiniteNumber(event.receipt.blockNumber, null),
+            tokenTransferMatched: typeof event.receipt.tokenTransferMatched === "boolean" ? event.receipt.tokenTransferMatched : null,
+            tokenTransferAmountAtomic: asString(event.receipt.tokenTransferAmountAtomic, null),
+            assetAddressMatched: typeof event.receipt.assetAddressMatched === "boolean" ? event.receipt.assetAddressMatched : null,
+            payToAddressMatched: typeof event.receipt.payToAddressMatched === "boolean" ? event.receipt.payToAddressMatched : null,
+          } : null,
+        }))
+      : [];
+    const settlementExceptions = Array.isArray(billingReconciliationSnapshot?.exceptions)
+      ? billingReconciliationSnapshot.exceptions.map((item) => ({
+          paymentEventId: asString(item.paymentEventId, "unknown-payment-event"),
+          createdAt: toIso(item.createdAt),
+          productId: asString(item.productId, "unknown-product"),
+          status: asString(item.status, "unknown"),
+          flags: Array.isArray(item.flags) ? item.flags.map((f) => String(f)) : [],
+          settlementTxHash: asString(item.settlementTxHash, null),
+          reason: asString(item.reason, null),
+        }))
+      : [];
+    const settlementSection = {
+      available: Boolean(billingReconciliationFetch.success),
+      endpointReachability: billingReconciliationFetch.success ? "connected" : "degraded",
+      fetchedAt: billingReconciliationFetch.fetchedAt || null,
+      error: billingReconciliationFetch.success ? null : (billingReconciliationFetch.error || null),
+      rpc: {
+        enabled: Boolean(billingReconciliationSnapshot?.rpc?.enabled),
+        urlConfigured: Boolean(billingReconciliationSnapshot?.rpc?.urlConfigured),
+        tokenDecimals: asFiniteNumber(billingReconciliationSnapshot?.rpc?.tokenDecimals, null),
+        sellerPayToAddress: asString(billingReconciliationSnapshot?.rpc?.sellerPayToAddress, null),
+        sellerTokenAddress: asString(billingReconciliationSnapshot?.rpc?.sellerTokenAddress, null),
+        checkedTransactions: asFiniteNumber(billingReconciliationSnapshot?.rpc?.checkedTransactions, 0) ?? 0,
+      },
+      summary: {
+        acceptedPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.acceptedPayments, 0) ?? 0,
+        acceptedRevenueUsdc: asFiniteNumber(billingReconciliationSnapshot?.summary?.acceptedRevenueUsdc, null),
+        officialAcceptedPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.officialAcceptedPayments, 0) ?? 0,
+        officialAcceptedRevenueUsdc: asFiniteNumber(billingReconciliationSnapshot?.summary?.officialAcceptedRevenueUsdc, null),
+        legacyAcceptedPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.legacyAcceptedPayments, 0) ?? 0,
+        legacyAcceptedRevenueUsdc: asFiniteNumber(billingReconciliationSnapshot?.summary?.legacyAcceptedRevenueUsdc, null),
+        reconciledPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.reconciledPayments, 0) ?? 0,
+        reconciledRevenueUsdc: asFiniteNumber(billingReconciliationSnapshot?.summary?.reconciledRevenueUsdc, null),
+        pendingOrUnverifiedOfficialPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.pendingOrUnverifiedOfficialPayments, 0) ?? 0,
+        failedOfficialPayments: asFiniteNumber(billingReconciliationSnapshot?.summary?.failedOfficialPayments, 0) ?? 0,
+        duplicateSettlementTxHashes: asFiniteNumber(billingReconciliationSnapshot?.summary?.duplicateSettlementTxHashes, 0) ?? 0,
+        txHashCoverageRate: asFiniteNumber(billingReconciliationSnapshot?.summary?.txHashCoverageRate, null),
+        receiptConfirmationRate: asFiniteNumber(billingReconciliationSnapshot?.summary?.receiptConfirmationRate, null),
+      },
+      exceptions: settlementExceptions,
+      events: settlementEvents,
+    };
+
     const stages = Array.isArray(productSnapshot?.pipeline?.stages) && productSnapshot.pipeline.stages.length > 0
       ? productSnapshot.pipeline.stages.map((stage) => ({
           stage: asString(stage.stage, "unknown"),
@@ -1363,8 +1692,10 @@ export async function handleGetFactorySnapshot() {
       economics: economicsSection,
       autonomy: autonomySection,
       delivery: deliverySection,
+      settlement: settlementSection,
       productFetch,
       webhookAttemptsFetch,
+      billingReconciliationFetch,
       usedCachedProductSnapshot,
       kvErrors,
     });
@@ -1380,6 +1711,7 @@ export async function handleGetFactorySnapshot() {
       kvErrors,
       productFetch,
       webhookAttemptsFetch,
+      billingReconciliationFetch,
       cacheInfo,
       usedCachedProductSnapshot,
     });
@@ -1399,6 +1731,7 @@ export async function handleGetFactorySnapshot() {
       pipeline: pipelineSection,
       outputs: outputsSection,
       delivery: deliverySection,
+      settlement: settlementSection,
       economics: economicsSection,
       autonomy: autonomySection,
       alerts,

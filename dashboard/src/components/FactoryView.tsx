@@ -22,6 +22,7 @@ import type {
   FactoryInputStream,
   FactoryOutputProduct,
   FactoryPipelineStageStatus,
+  FactorySettlementReconciliationException,
   FactoryWebhookDeliveryAttempt,
 } from '../types/automaton';
 
@@ -354,6 +355,32 @@ function WebhookAttemptRow({ attempt }: { attempt: FactoryWebhookDeliveryAttempt
   );
 }
 
+function SettlementExceptionRow({ item }: { item: FactorySettlementReconciliationException }) {
+  return (
+    <div className="border border-gray-800 rounded p-2 bg-black/20 text-[11px]">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(item.status)}`}>{humanizeStatus(item.status)}</span>
+            {item.flags.map((flag) => (
+              <span key={`${item.paymentEventId}-${flag}`} className="text-[10px] font-mono px-2 py-0.5 rounded border border-yellow-500/20 text-yellow-300 bg-yellow-500/5">
+                {flag}
+              </span>
+            ))}
+          </div>
+          <div className="text-gray-200 font-mono mt-1 break-all">{item.productId} • {item.paymentEventId}</div>
+          {item.settlementTxHash ? <div className="text-gray-500 mt-1 break-all font-mono">tx {item.settlementTxHash}</div> : null}
+          {item.reason ? <div className="text-yellow-100 mt-1 break-words">{item.reason}</div> : null}
+        </div>
+        <div className="text-right text-[10px] font-mono text-gray-500">
+          <div>{relativeTime(item.createdAt)}</div>
+          <div>{formatTimestamp(item.createdAt)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AlertRow({ alert }: { alert: FactoryAlert }) {
   return (
     <div className="border border-gray-800 rounded p-3 bg-black/20">
@@ -408,6 +435,7 @@ export function FactoryView({ runtime }: FactoryViewProps) {
   const sources = snapshot?.sources;
   const outputs = snapshot?.outputs;
   const delivery = snapshot?.delivery;
+  const settlement = snapshot?.settlement;
   const pipeline = snapshot?.pipeline;
   const economics = snapshot?.economics;
   const autonomy = snapshot?.autonomy;
@@ -802,6 +830,62 @@ export function FactoryView({ runtime }: FactoryViewProps) {
                   ) : (
                     <div className="text-sm text-gray-500 font-mono">
                       {delivery?.webhooks?.available ? 'No webhook delivery attempts in the current operator window.' : 'Webhook attempts endpoint unavailable.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionShell>
+
+          <SectionShell title="BILLING & SETTLEMENT RECONCILIATION" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
+            <div className="space-y-3">
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-mono text-xs text-gray-300 mb-2">SETTLEMENT RECONCILIATION SUMMARY</div>
+                    <div className="text-sm text-gray-200">
+                      {settlement?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      fetched {relativeTime(settlement?.fetchedAt)} • rpc {settlement?.rpc?.enabled ? 'enabled' : 'disabled'} • checks {formatNum(settlement?.rpc?.checkedTransactions, 0)}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1 break-all">
+                      payTo {settlement?.rpc?.sellerPayToAddress || '—'} • asset {settlement?.rpc?.sellerTokenAddress || '—'}
+                    </div>
+                    {settlement?.error ? (
+                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{settlement.error}</div>
+                    ) : null}
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(settlement?.endpointReachability || 'unknown')}`}>
+                    {humanizeStatus(settlement?.endpointReachability || 'unknown')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                  <MetricRow label="accepted" value={formatNum(settlement?.summary?.acceptedPayments, 0)} />
+                  <MetricRow label="official" value={formatNum(settlement?.summary?.officialAcceptedPayments, 0)} />
+                  <MetricRow label="reconciled" value={formatNum(settlement?.summary?.reconciledPayments, 0)} />
+                  <MetricRow label="failed" value={formatNum(settlement?.summary?.failedOfficialPayments, 0)} />
+                  <MetricRow label="pending" value={formatNum(settlement?.summary?.pendingOrUnverifiedOfficialPayments, 0)} />
+                  <MetricRow label="dup txhash" value={formatNum(settlement?.summary?.duplicateSettlementTxHashes, 0)} />
+                  <MetricRow label="txhash coverage" value={formatPct(settlement?.summary?.txHashCoverageRate, 1)} />
+                  <MetricRow label="receipt confirm" value={formatPct(settlement?.summary?.receiptConfirmationRate, 1)} />
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-[11px]">
+                  <MetricRow label="accepted rev" value={formatUsd(settlement?.summary?.acceptedRevenueUsdc, 4)} />
+                  <MetricRow label="official rev" value={formatUsd(settlement?.summary?.officialAcceptedRevenueUsdc, 4)} />
+                  <MetricRow label="legacy rev" value={formatUsd(settlement?.summary?.legacyAcceptedRevenueUsdc, 4)} />
+                  <MetricRow label="reconciled rev" value={formatUsd(settlement?.summary?.reconciledRevenueUsdc, 4)} />
+                </div>
+              </div>
+
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="font-mono text-xs text-gray-300 mb-3">RECONCILIATION EXCEPTIONS</div>
+                <div className="space-y-2 max-h-[320px] overflow-y-auto custom-scrollbar pr-1">
+                  {settlement?.exceptions?.length ? (
+                    settlement.exceptions.map((item) => <SettlementExceptionRow key={`${item.paymentEventId}-${item.status}-${item.createdAt}`} item={item} />)
+                  ) : (
+                    <div className="text-sm text-gray-500 font-mono">
+                      {settlement?.available ? 'No reconciliation exceptions in the current operator window.' : 'Billing reconciliation endpoint unavailable.'}
                     </div>
                   )}
                 </div>
