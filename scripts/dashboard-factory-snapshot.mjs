@@ -1,4 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 import { loadConfig, resolvePath } from "../dist/config.js";
 import { createDatabase } from "../dist/state/database.js";
@@ -24,6 +27,10 @@ const FACTORY_SYNTHESIS_HEARTBEAT_TASKS = [
   "check_source_quality",
   "evaluate_expansion",
 ];
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const FACTORY_CONTROL_PLANE_BACKUP_ROOT = path.resolve(SCRIPT_DIR, "../.runtime/backups/control-plane");
+const FACTORY_CONTROL_PLANE_BACKUP_MAX_AGE_HOURS = 24;
 
 let productFactorySnapshotCache = null;
 
@@ -96,6 +103,112 @@ function round(value, decimals = 4) {
   if (!Number.isFinite(value)) return 0;
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    return safeParseJson(raw);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      value: null,
+    };
+  }
+}
+
+function readControlPlaneBackupStatus() {
+  const configuredRoot = asString(process.env.AUTOMATON_CONTROL_PLANE_BACKUP_ROOT, null);
+  const rootPath = configuredRoot ? path.resolve(configuredRoot) : FACTORY_CONTROL_PLANE_BACKUP_ROOT;
+  const maxAgeHours = asFiniteNumber(process.env.AUTOMATON_CONTROL_PLANE_BACKUP_MAX_AGE_HOURS, FACTORY_CONTROL_PLANE_BACKUP_MAX_AGE_HOURS)
+    ?? FACTORY_CONTROL_PLANE_BACKUP_MAX_AGE_HOURS;
+  const base = {
+    available: false,
+    status: "missing",
+    rootPath,
+    latestRunDir: null,
+    latestCreatedAt: null,
+    latestAgeHours: null,
+    stale: false,
+    maxAgeHours,
+    artifactPath: null,
+    artifactSizeBytes: null,
+    artifactSha256: null,
+    manifestPath: null,
+    runCount: 0,
+    includedCount: 0,
+    missingOptionalCount: 0,
+    hasStateDb: null,
+    error: null,
+  };
+
+  try {
+    if (!fs.existsSync(rootPath)) {
+      return { ...base, status: "missing", error: `Backup root not found: ${rootPath}` };
+    }
+
+    const runs = fs.readdirSync(rootPath, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => b.localeCompare(a));
+
+    if (runs.length === 0) {
+      return { ...base, status: "missing", error: "No control-plane backup runs found." };
+    }
+
+    const latestRunDir = path.join(rootPath, runs[0]);
+    const manifestPath = path.join(latestRunDir, "manifest.json");
+    const manifestParsed = fs.existsSync(manifestPath)
+      ? readJsonFileSafe(manifestPath)
+      : { ok: false, error: "manifest_missing", value: null };
+    const manifest = manifestParsed.ok && isRecord(manifestParsed.value) ? manifestParsed.value : null;
+
+    const artifactName = asString(manifest?.artifact, null);
+    let artifactPath = artifactName ? path.join(latestRunDir, artifactName) : null;
+    if (!artifactPath || !fs.existsSync(artifactPath)) {
+      const tarballs = fs.readdirSync(latestRunDir).filter((name) => name.endsWith('.tar.gz')).sort();
+      artifactPath = tarballs.length > 0 ? path.join(latestRunDir, tarballs[0]) : null;
+    }
+
+    const statTarget = artifactPath && fs.existsSync(artifactPath) ? artifactPath : latestRunDir;
+    const stat = fs.statSync(statTarget);
+    const latestCreatedAt = toIso(asString(manifest?.createdAt, null)) || new Date(stat.mtimeMs).toISOString();
+    const ageHoursRaw = (Date.now() - Date.parse(latestCreatedAt)) / (1000 * 60 * 60);
+    const latestAgeHours = Number.isFinite(ageHoursRaw) ? round(ageHoursRaw, 3) : null;
+    const stale = latestAgeHours != null ? latestAgeHours > maxAgeHours : false;
+
+    const included = Array.isArray(manifest?.included) ? manifest.included.filter((v) => typeof v === "string") : [];
+    const missingOptional = Array.isArray(manifest?.missingOptional) ? manifest.missingOptional.filter((v) => typeof v === "string") : [];
+    const hasStateDb = included.includes("automaton/state.db") || included.includes("automaton/custom-state.db");
+
+    return {
+      ...base,
+      available: true,
+      status: stale ? "stale" : "ok",
+      latestRunDir,
+      latestCreatedAt,
+      latestAgeHours,
+      stale,
+      artifactPath,
+      artifactSizeBytes: artifactPath && fs.existsSync(artifactPath) ? fs.statSync(artifactPath).size : null,
+      artifactSha256: asString(manifest?.artifactSha256, asString(manifest?.sha256, null)),
+      manifestPath: fs.existsSync(manifestPath) ? manifestPath : null,
+      runCount: runs.length,
+      includedCount: included.length,
+      missingOptionalCount: missingOptional.length,
+      hasStateDb,
+      error: manifest
+        ? null
+        : (manifestParsed.error === "manifest_missing" ? "Latest backup manifest missing." : `Failed to parse manifest: ${manifestParsed.error}`),
+    };
+  } catch (error) {
+    return {
+      ...base,
+      status: "error",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function computeUptime7dFromHealthSamples(rawSamples) {
@@ -703,6 +816,7 @@ function buildFactoryDataSources({
   billingReconciliationFetch,
   cacheInfo,
   usedCachedProductSnapshot,
+  controlPlaneBackup,
 }) {
   const dataSources = [];
   dataSources.push({
@@ -784,6 +898,23 @@ function buildFactoryDataSources({
       ? `Billing reconciliation loaded (${billingReconciliationFetch.snapshot?.summary?.acceptedPayments ?? 0} accepted / ${billingReconciliationFetch.snapshot?.summary?.reconciledPayments ?? 0} reconciled)`
       : "Billing reconciliation endpoint unavailable (optional)",
     error: billingReconciliationFetch?.success ? null : (billingReconciliationFetch?.error || null),
+  });
+
+  dataSources.push({
+    name: "local_control_plane_backups",
+    status: controlPlaneBackup?.available
+      ? (controlPlaneBackup?.stale ? "stale" : (String(controlPlaneBackup?.status || "ok").toLowerCase() === "error" ? "degraded" : "ok"))
+      : "degraded",
+    reachable: Boolean(controlPlaneBackup?.available),
+    stale: Boolean(controlPlaneBackup?.stale),
+    staleAgeSeconds: Number.isFinite(controlPlaneBackup?.latestAgeHours) ? round((controlPlaneBackup.latestAgeHours || 0) * 3600, 2) : null,
+    used: true,
+    lastFetchedAt: new Date().toISOString(),
+    path: controlPlaneBackup?.rootPath || null,
+    message: controlPlaneBackup?.available
+      ? `Latest control-plane backup ${controlPlaneBackup.stale ? "is stale" : "is fresh"} (${controlPlaneBackup.latestCreatedAt || "unknown time"})`
+      : "Control-plane backups missing or unavailable",
+    error: controlPlaneBackup?.error || null,
   });
 
   if (cacheInfo) {
@@ -920,7 +1051,7 @@ function normalizeAutonomySection({ integration, kv, economics }) {
   };
 }
 
-function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, settlement, productFetch, webhookAttemptsFetch, billingReconciliationFetch, usedCachedProductSnapshot, kvErrors }) {
+function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, settlement, backups, productFetch, webhookAttemptsFetch, billingReconciliationFetch, usedCachedProductSnapshot, kvErrors }) {
   const alerts = [];
   const nowIso = new Date().toISOString();
 
@@ -1200,6 +1331,36 @@ function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics
         details: { receiptConfirmationRate },
       },
     );
+  }
+
+  const controlPlaneBackup = backups?.controlPlane || null;
+  if (!controlPlaneBackup || !controlPlaneBackup.available) {
+    pushAlert(
+      "control_plane_backup_missing",
+      "medium",
+      "Control-plane backup snapshot is missing; run ops:backup:control-plane before policy/deploy changes.",
+      {
+        relatedEntity: { type: "backup", id: "control_plane" },
+        details: { error: controlPlaneBackup?.error || null },
+      },
+    );
+  } else {
+    if (controlPlaneBackup.stale) {
+      pushAlert(
+        "control_plane_backup_stale",
+        "medium",
+        `Latest control-plane backup is stale (${round(controlPlaneBackup.latestAgeHours ?? 0, 2)}h > ${round(controlPlaneBackup.maxAgeHours ?? 24, 2)}h).`,
+        { relatedEntity: { type: "backup", id: "control_plane" } },
+      );
+    }
+    if (controlPlaneBackup.hasStateDb === false) {
+      pushAlert(
+        "control_plane_backup_missing_state_db",
+        "high",
+        "Latest control-plane backup does not include the automaton state DB artifact.",
+        { relatedEntity: { type: "backup", id: "control_plane" } },
+      );
+    }
   }
 
   const severityRank = { high: 0, medium: 1, info: 2, low: 3 };
@@ -1608,6 +1769,10 @@ export async function handleGetFactorySnapshot() {
       events: settlementEvents,
     };
 
+    const backupsSection = {
+      controlPlane: readControlPlaneBackupStatus(),
+    };
+
     const stages = Array.isArray(productSnapshot?.pipeline?.stages) && productSnapshot.pipeline.stages.length > 0
       ? productSnapshot.pipeline.stages.map((stage) => ({
           stage: asString(stage.stage, "unknown"),
@@ -1693,6 +1858,7 @@ export async function handleGetFactorySnapshot() {
       autonomy: autonomySection,
       delivery: deliverySection,
       settlement: settlementSection,
+      backups: backupsSection,
       productFetch,
       webhookAttemptsFetch,
       billingReconciliationFetch,
@@ -1714,6 +1880,7 @@ export async function handleGetFactorySnapshot() {
       billingReconciliationFetch,
       cacheInfo,
       usedCachedProductSnapshot,
+      controlPlaneBackup: backupsSection.controlPlane,
     });
 
     const mode = !integration.enabled
@@ -1732,6 +1899,7 @@ export async function handleGetFactorySnapshot() {
       outputs: outputsSection,
       delivery: deliverySection,
       settlement: settlementSection,
+      backups: backupsSection,
       economics: economicsSection,
       autonomy: autonomySection,
       alerts,

@@ -78,6 +78,15 @@ function formatNum(value: number | null | undefined, digits = 0): string {
   return Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
+function formatBytes(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) return '—';
+  const n = Number(value || 0);
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 ** 2) return `${(n / 1024).toFixed(1)} KiB`;
+  if (n < 1024 ** 3) return `${(n / (1024 ** 2)).toFixed(1)} MiB`;
+  return `${(n / (1024 ** 3)).toFixed(2)} GiB`;
+}
+
 function formatMaybeMinutes(value: number | null | undefined): string {
   if (!Number.isFinite(value)) return '—';
   return `${Number(value || 0).toFixed(1)}m`;
@@ -94,6 +103,13 @@ function formatMaybeMs(value: number | null | undefined): string {
   const n = Number(value || 0);
   if (n >= 1000) return `${(n / 1000).toFixed(2)}s`;
   return `${Math.round(n)}ms`;
+}
+
+function formatMaybeHours(value: number | null | undefined): string {
+  if (!Number.isFinite(value)) return '—';
+  const n = Number(value || 0);
+  if (n < 1) return `${(n * 60).toFixed(1)}m`;
+  return `${n.toFixed(1)}h`;
 }
 
 function statusBadgeClass(status: string): string {
@@ -508,6 +524,8 @@ export function FactoryView({ runtime }: FactoryViewProps) {
   const outputs = snapshot?.outputs;
   const delivery = snapshot?.delivery;
   const settlement = snapshot?.settlement;
+  const backups = snapshot?.backups;
+  const controlPlaneBackup = backups?.controlPlane;
   const pipeline = snapshot?.pipeline;
   const economics = snapshot?.economics;
   const autonomy = snapshot?.autonomy;
@@ -591,6 +609,10 @@ export function FactoryView({ runtime }: FactoryViewProps) {
   const settlementCoverageLabel = settlement?.summary?.txHashCoverageRate == null
     ? '—'
     : `${(settlement.summary.txHashCoverageRate * 100).toFixed(1)}%`;
+
+  const controlPlaneBackupStatus = controlPlaneBackup?.available
+    ? (controlPlaneBackup?.stale ? 'stale' : (controlPlaneBackup?.status || 'ok'))
+    : (controlPlaneBackup?.status || 'degraded');
 
   return (
     <div className="h-full flex flex-col p-8 pt-12 animate-fade-in overflow-y-auto custom-scrollbar gap-6">
@@ -942,6 +964,72 @@ export function FactoryView({ runtime }: FactoryViewProps) {
             </div>
           </SectionShell>
 
+          </div>
+
+          <div className="grid grid-cols-1 gap-6">
+            <SectionShell title="BACKUPS & RECOVERY" right={<span className="text-[10px] font-mono text-gray-500">local control-plane telemetry</span>}>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                <div className="border border-gray-800 rounded p-3 bg-black/20">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                      <div className="font-mono text-xs text-gray-300 mb-2">CONTROL-PLANE BACKUP STATUS</div>
+                      <div className="text-sm text-gray-200">
+                        {controlPlaneBackup?.available ? 'Backup snapshot available' : 'No backup snapshot available'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        latest {relativeTime(controlPlaneBackup?.latestCreatedAt)} • threshold {formatMaybeHours(controlPlaneBackup?.maxAgeHours)}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1 break-all">
+                        root {controlPlaneBackup?.rootPath || '—'}
+                      </div>
+                      {controlPlaneBackup?.error ? (
+                        <div className="text-[11px] text-yellow-200 mt-2 break-words">{controlPlaneBackup.error}</div>
+                      ) : null}
+                      {controlPlaneBackup?.hasStateDb === false ? (
+                        <div className="text-[11px] text-red-200 mt-2">Latest backup is missing automaton state DB content.</div>
+                      ) : null}
+                    </div>
+                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(controlPlaneBackupStatus)}`}>
+                      {humanizeStatus(controlPlaneBackupStatus)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                    <MetricRow label="age" value={formatMaybeHours(controlPlaneBackup?.latestAgeHours)} />
+                    <MetricRow label="runs" value={formatNum(controlPlaneBackup?.runCount, 0)} />
+                    <MetricRow label="artifact size" value={formatBytes(controlPlaneBackup?.artifactSizeBytes)} />
+                    <MetricRow label="included" value={formatNum(controlPlaneBackup?.includedCount, 0)} />
+                    <MetricRow label="missing opt" value={formatNum(controlPlaneBackup?.missingOptionalCount, 0)} />
+                    <MetricRow label="has state db" value={controlPlaneBackup?.hasStateDb == null ? '—' : (controlPlaneBackup.hasStateDb ? 'yes' : 'no')} />
+                    <MetricRow label="created" value={formatTimestamp(controlPlaneBackup?.latestCreatedAt)} />
+                    <MetricRow label="manifest" value={controlPlaneBackup?.manifestPath ? 'present' : 'missing'} />
+                  </div>
+                </div>
+                <div className="border border-gray-800 rounded p-3 bg-black/20">
+                  <div className="font-mono text-xs text-gray-300 mb-2">BACKUP ARTIFACT DETAILS</div>
+                  <div className="space-y-2 text-[11px]">
+                    <div>
+                      <div className="text-gray-500">latest run dir</div>
+                      <div className="text-gray-300 break-all">{controlPlaneBackup?.latestRunDir || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">artifact</div>
+                      <div className="text-gray-300 break-all">{controlPlaneBackup?.artifactPath || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">manifest</div>
+                      <div className="text-gray-300 break-all">{controlPlaneBackup?.manifestPath || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-gray-500">sha256</div>
+                      <div className="text-gray-300 break-all font-mono">{controlPlaneBackup?.artifactSha256 || '—'}</div>
+                    </div>
+                    <div className="pt-1 text-gray-500">
+                      Wallet material and Vultisig shares are intentionally excluded from the control-plane backup snapshot.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SectionShell>
           </div>
 
           <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">

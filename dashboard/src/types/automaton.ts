@@ -490,6 +490,30 @@ export interface FactorySettlementReconciliationSection {
   events: FactorySettlementReconciliationEvent[];
 }
 
+export interface FactoryControlPlaneBackupStatus {
+  available: boolean;
+  status: string;
+  rootPath: string;
+  latestRunDir: string | null;
+  latestCreatedAt: string | null;
+  latestAgeHours: number | null;
+  stale: boolean;
+  maxAgeHours: number;
+  artifactPath: string | null;
+  artifactSizeBytes: number | null;
+  artifactSha256: string | null;
+  manifestPath: string | null;
+  runCount: number;
+  includedCount: number;
+  missingOptionalCount: number;
+  hasStateDb: boolean | null;
+  error: string | null;
+}
+
+export interface FactoryBackupsSection {
+  controlPlane: FactoryControlPlaneBackupStatus;
+}
+
 export interface FactoryEconomicsSection {
   revenuePerDay: number | null;
   costPerDay: number | null;
@@ -555,6 +579,7 @@ export interface FactorySnapshot {
   outputs: FactoryOutputsSection;
   delivery: FactoryDeliverySection;
   settlement: FactorySettlementReconciliationSection;
+  backups: FactoryBackupsSection;
   economics: FactoryEconomicsSection;
   autonomy: FactoryAutonomySection;
   alerts: FactoryAlert[];
