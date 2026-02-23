@@ -167,6 +167,13 @@ npm run ops:sandbox:stop
 ```
 This starts `automaton-runtime`, private `dashboard-api`, Telegram command listener, and looping treasury worker, while intentionally excluding the Vite dev UI (`dashboard-ui`).
 
+Control-plane backup (recommended before policy changes or sandbox cutover):
+```bash
+# Snapshot ~/.automaton state DB + treasury audit logs + redacted .env.synthesis
+npm run ops:backup:control-plane
+```
+Backups are written under `.runtime/backups/control-plane/<timestamp>/` as `control-plane-backup.tar.gz` plus `manifest.json`. Wallet material and Vultisig shares are intentionally excluded. Use `AUTOMATON_BACKUP_INCLUDE_OPERATOR_LOGS=true` to include `.runtime/operator-stack/*.log` in the snapshot.
+
 One-command local operator stack (dashboard API + dashboard UI + Telegram command listener + looping treasury worker):
 ```bash
 npm run ops:start
