@@ -22,6 +22,7 @@ import type {
   FactoryInputStream,
   FactoryOutputProduct,
   FactoryPipelineStageStatus,
+  FactoryWebhookDeliveryAttempt,
 } from '../types/automaton';
 
 type FamilyFilter = 'all' | 'market_microstructure' | 'onchain_flow' | 'macro_news_risk';
@@ -328,6 +329,31 @@ function ProductRow({ product }: { product: FactoryOutputProduct }) {
   );
 }
 
+function WebhookAttemptRow({ attempt }: { attempt: FactoryWebhookDeliveryAttempt }) {
+  return (
+    <div className="border border-gray-800 rounded p-2 bg-black/20 text-[11px]">
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(attempt.status)}`}>{humanizeStatus(attempt.status)}</span>
+            {attempt.terminal ? <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-red-500/20 text-red-300">TERMINAL</span> : null}
+            <span className="text-[10px] font-mono text-gray-500">#{attempt.attemptNumber ?? '—'}</span>
+            {attempt.httpStatus != null ? <span className="text-[10px] font-mono text-gray-400">HTTP {attempt.httpStatus}</span> : null}
+          </div>
+          <div className="text-gray-200 font-mono mt-1 break-all">{attempt.productId} • {attempt.subscriptionId}</div>
+          <div className="text-gray-500 mt-1 break-all">customer {attempt.customerId} • trigger {attempt.triggerType}</div>
+          {attempt.errorMessage ? <div className="text-red-200 mt-1 break-words">{attempt.errorMessage}</div> : null}
+        </div>
+        <div className="text-right text-[10px] font-mono text-gray-500">
+          <div>{relativeTime(attempt.createdAt)}</div>
+          <div>{formatTimestamp(attempt.createdAt)}</div>
+          {attempt.nextRetryAt ? <div className="text-yellow-300 mt-1">retry {relativeTime(attempt.nextRetryAt)}</div> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AlertRow({ alert }: { alert: FactoryAlert }) {
   return (
     <div className="border border-gray-800 rounded p-3 bg-black/20">
@@ -381,6 +407,7 @@ export function FactoryView({ runtime }: FactoryViewProps) {
   const integration = snapshot?.integration;
   const sources = snapshot?.sources;
   const outputs = snapshot?.outputs;
+  const delivery = snapshot?.delivery;
   const pipeline = snapshot?.pipeline;
   const economics = snapshot?.economics;
   const autonomy = snapshot?.autonomy;
@@ -738,6 +765,49 @@ export function FactoryView({ runtime }: FactoryViewProps) {
               </div>
             </SectionShell>
           </div>
+
+          <SectionShell title="DELIVERY CHANNELS (WEBHOOKS)" right={<span className="text-[10px] font-mono text-gray-500">operator telemetry</span>}>
+            <div className="space-y-3">
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <div className="font-mono text-xs text-gray-300 mb-2">WEBHOOK DELIVERY SUMMARY</div>
+                    <div className="text-sm text-gray-200">
+                      {delivery?.webhooks?.available ? 'Connected' : 'Unavailable (optional endpoint)'}
+                    </div>
+                    <div className="text-[11px] text-gray-500 mt-1">
+                      fetched {relativeTime(delivery?.webhooks?.fetchedAt)} • persistence {delivery?.webhooks?.persistenceBackend || '—'}
+                    </div>
+                    {delivery?.webhooks?.error ? (
+                      <div className="text-[11px] text-yellow-200 mt-2 break-words">{delivery.webhooks.error}</div>
+                    ) : null}
+                  </div>
+                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(delivery?.webhooks?.endpointReachability || 'unknown')}`}>
+                    {humanizeStatus(delivery?.webhooks?.endpointReachability || 'unknown')}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-[11px]">
+                  <MetricRow label="attempts" value={formatNum(delivery?.webhooks?.totalAttempts, 0)} />
+                  <MetricRow label="delivered" value={formatNum(delivery?.webhooks?.statusCounts?.delivered, 0)} />
+                  <MetricRow label="failed" value={formatNum(delivery?.webhooks?.statusCounts?.failed, 0)} />
+                  <MetricRow label="dead-letter" value={formatNum(delivery?.webhooks?.statusCounts?.deadLettered, 0)} />
+                </div>
+              </div>
+
+              <div className="border border-gray-800 rounded p-3 bg-black/20">
+                <div className="font-mono text-xs text-gray-300 mb-3">RECENT WEBHOOK DELIVERY ATTEMPTS</div>
+                <div className="space-y-2 max-h-[360px] overflow-y-auto custom-scrollbar pr-1">
+                  {delivery?.webhooks?.attempts?.length ? (
+                    delivery.webhooks.attempts.map((attempt) => <WebhookAttemptRow key={attempt.id} attempt={attempt} />)
+                  ) : (
+                    <div className="text-sm text-gray-500 font-mono">
+                      {delivery?.webhooks?.available ? 'No webhook delivery attempts in the current operator window.' : 'Webhook attempts endpoint unavailable.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </SectionShell>
 
           <SectionShell title="DATA SOURCES" right={<span className="text-[10px] font-mono text-gray-500">{dataSources.length} sources</span>}>
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-2">

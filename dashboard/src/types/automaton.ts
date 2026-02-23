@@ -383,6 +383,44 @@ export interface FactoryOutputsSection {
   items: FactoryOutputProduct[];
 }
 
+export interface FactoryWebhookDeliveryAttempt {
+  id: string;
+  subscriptionId: string;
+  productId: string;
+  customerId: string;
+  triggerType: string;
+  triggerEventId: string | null;
+  triggerEventCreatedAt: string | null;
+  attemptNumber: number | null;
+  terminal: boolean;
+  status: string;
+  httpStatus: number | null;
+  errorMessage: string | null;
+  signalPointId: string | null;
+  signalBucketAt: string | null;
+  nextRetryAt: string | null;
+  createdAt: string | null;
+}
+
+export interface FactoryWebhookDeliverySection {
+  available: boolean;
+  endpointReachability: string;
+  fetchedAt: string | null;
+  persistenceBackend: string | null;
+  totalAttempts: number;
+  statusCounts: {
+    delivered: number;
+    failed: number;
+    deadLettered: number;
+  };
+  attempts: FactoryWebhookDeliveryAttempt[];
+  error: string | null;
+}
+
+export interface FactoryDeliverySection {
+  webhooks: FactoryWebhookDeliverySection;
+}
+
 export interface FactoryEconomicsSection {
   revenuePerDay: number | null;
   costPerDay: number | null;
@@ -446,6 +484,7 @@ export interface FactorySnapshot {
   sources: FactorySourceInputsSection;
   pipeline: FactoryPipelineSection;
   outputs: FactoryOutputsSection;
+  delivery: FactoryDeliverySection;
   economics: FactoryEconomicsSection;
   autonomy: FactoryAutonomySection;
   alerts: FactoryAlert[];

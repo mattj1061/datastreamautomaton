@@ -5,6 +5,8 @@ import { createDatabase } from "../dist/state/database.js";
 import { getSynthesisIntegrationConfig } from "../dist/heartbeat/synthesis-integration.js";
 
 const FACTORY_INTERNAL_SNAPSHOT_PATH = "/v1/internal/factory/snapshot";
+const FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH = "/v1/internal/signals/webhooks/delivery-attempts";
+const FACTORY_WEBHOOK_ATTEMPTS_LIMIT = 25;
 const FACTORY_PRODUCT_SNAPSHOT_CACHE_TTL_MS = 60_000;
 const FACTORY_REQUIRED_STREAM_FAMILIES = [
   "market_microstructure",
@@ -260,12 +262,65 @@ function normalizeFactoryInternalSnapshot(payload) {
   };
 }
 
+function normalizeWebhookAttemptsSnapshot(payload) {
+  if (!isRecord(payload)) {
+    throw new Error("Webhook delivery attempts response is not an object.");
+  }
+
+  const attemptsRaw = Array.isArray(payload.attempts) ? payload.attempts : [];
+  const statusCountsRaw = isRecord(payload.statusCounts) ? payload.statusCounts : {};
+
+  const attempts = attemptsRaw
+    .filter(isRecord)
+    .map((attempt) => ({
+      id: asString(attempt.id, "unknown-attempt"),
+      subscriptionId: asString(attempt.subscriptionId, "unknown-subscription"),
+      productId: asString(attempt.productId, "unknown-product"),
+      customerId: asString(attempt.customerId, "unknown-customer"),
+      triggerType: asString(attempt.triggerType, "unknown"),
+      triggerEventId: asString(attempt.triggerEventId, null),
+      triggerEventCreatedAt: toIso(attempt.triggerEventCreatedAt),
+      attemptNumber: asFiniteNumber(attempt.attemptNumber, null),
+      terminal: Boolean(attempt.terminal),
+      status: asString(attempt.status, "unknown"),
+      httpStatus: asFiniteNumber(attempt.httpStatus, null),
+      errorMessage: asString(attempt.errorMessage, null),
+      signalPointId: asString(attempt.signalPointId, null),
+      signalBucketAt: toIso(attempt.signalBucketAt),
+      requestHeaders: isRecord(attempt.requestHeaders) ? attempt.requestHeaders : {},
+      responseMetadata: isRecord(attempt.responseMetadata) ? attempt.responseMetadata : {},
+      nextRetryAt: toIso(attempt.nextRetryAt),
+      createdAt: toIso(attempt.createdAt),
+    }));
+
+  return {
+    generatedAt: toIso(payload.generatedAt) || new Date().toISOString(),
+    total: Math.max(0, Math.floor(asFiniteNumber(payload.total, attempts.length) || 0)),
+    persistenceBackend: asString(payload.persistenceBackend, "unknown"),
+    filters: isRecord(payload.filters) ? payload.filters : {},
+    statusCounts: {
+      delivered: Math.max(0, Math.floor(asFiniteNumber(statusCountsRaw.delivered, 0) || 0)),
+      failed: Math.max(0, Math.floor(asFiniteNumber(statusCountsRaw.failed, 0) || 0)),
+      deadLettered: Math.max(0, Math.floor(asFiniteNumber(statusCountsRaw.dead_lettered, 0) || 0)),
+    },
+    attempts,
+  };
+}
+
 function buildInternalFactorySnapshotUrl(baseUrl) {
   if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
     throw new Error("Missing synthesis product API base URL.");
   }
   const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
   return `${trimmed}${FACTORY_INTERNAL_SNAPSHOT_PATH}`;
+}
+
+function buildInternalWebhookAttemptsUrl(baseUrl) {
+  if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
+    throw new Error("Missing synthesis product API base URL.");
+  }
+  const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${trimmed}${FACTORY_INTERNAL_WEBHOOK_ATTEMPTS_PATH}?limit=${FACTORY_WEBHOOK_ATTEMPTS_LIMIT}`;
 }
 
 async function fetchJsonWithTimeout(url, init, timeoutMs) {
@@ -304,6 +359,27 @@ async function fetchFactoryProductSnapshot(integration) {
     url,
     fetchedAt: new Date().toISOString(),
     snapshot: normalized,
+  };
+}
+
+async function fetchFactoryWebhookDeliveryAttempts(integration) {
+  const url = buildInternalWebhookAttemptsUrl(integration.apiBaseUrl);
+  const timeoutMs = Math.max(1500, Math.min(20_000, Number(integration.requestTimeoutMs || 10_000)));
+  const payload = await fetchJsonWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        "x-internal-token": integration.internalToken || "",
+      },
+    },
+    timeoutMs,
+  );
+
+  return {
+    url,
+    fetchedAt: new Date().toISOString(),
+    snapshot: normalizeWebhookAttemptsSnapshot(payload),
   };
 }
 
@@ -502,6 +578,7 @@ function buildFactoryDataSources({
   runtimeDbPath,
   kvErrors,
   productFetch,
+  webhookAttemptsFetch,
   cacheInfo,
   usedCachedProductSnapshot,
 }) {
@@ -555,6 +632,21 @@ function buildFactoryDataSources({
         ? "Using cached product-service factory snapshot"
         : "Product-service factory snapshot unavailable",
     error: productFetch.success ? null : (productFetch.error || null),
+  });
+
+  dataSources.push({
+    name: "product_service_internal_webhook_delivery_attempts",
+    status: webhookAttemptsFetch?.success ? "ok" : "degraded",
+    reachable: Boolean(webhookAttemptsFetch?.success),
+    stale: false,
+    staleAgeSeconds: null,
+    used: Boolean(webhookAttemptsFetch?.success),
+    lastFetchedAt: webhookAttemptsFetch?.fetchedAt || null,
+    path: webhookAttemptsFetch?.url || null,
+    message: webhookAttemptsFetch?.success
+      ? `Webhook delivery attempts loaded (${webhookAttemptsFetch.snapshot?.total ?? 0} records)`
+      : "Webhook delivery attempts endpoint unavailable (optional)",
+    error: webhookAttemptsFetch?.success ? null : (webhookAttemptsFetch?.error || null),
   });
 
   if (cacheInfo) {
@@ -691,7 +783,7 @@ function normalizeAutonomySection({ integration, kv, economics }) {
   };
 }
 
-function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, productFetch, usedCachedProductSnapshot, kvErrors }) {
+function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics, autonomy, delivery, productFetch, webhookAttemptsFetch, usedCachedProductSnapshot, kvErrors }) {
   const alerts = [];
   const nowIso = new Date().toISOString();
 
@@ -849,6 +941,44 @@ function buildFactoryAlerts({ integration, sources, outputs, pipeline, economics
     }
   }
 
+  const webhookSummary = isRecord(delivery?.webhooks) ? delivery.webhooks : null;
+  const webhookStatusCounts = isRecord(webhookSummary?.statusCounts) ? webhookSummary.statusCounts : null;
+  const deadLetteredCount = asFiniteNumber(webhookStatusCounts?.deadLettered, 0) || 0;
+  const failedCount = asFiniteNumber(webhookStatusCounts?.failed, 0) || 0;
+  if (webhookAttemptsFetch && webhookAttemptsFetch.success === false && integration.enabled) {
+    pushAlert(
+      "webhook_attempts_endpoint_unavailable",
+      "info",
+      "Webhook delivery attempts operator endpoint is unavailable; delivery observability is reduced.",
+      {
+        relatedEntity: { type: "delivery_channel", id: "webhooks" },
+        details: { error: webhookAttemptsFetch.error || null },
+      },
+    );
+  }
+  if (deadLetteredCount > 0) {
+    pushAlert(
+      "webhook_dead_lettered_attempts_present",
+      "high",
+      `Webhook dead-letter attempts present: ${deadLetteredCount}.`,
+      {
+        relatedEntity: { type: "delivery_channel", id: "webhooks" },
+        details: { deadLetteredCount },
+      },
+    );
+  }
+  if (failedCount > 0) {
+    pushAlert(
+      "webhook_failed_attempts_recent",
+      "medium",
+      `Webhook failed attempts present in recent operator window: ${failedCount}.`,
+      {
+        relatedEntity: { type: "delivery_channel", id: "webhooks" },
+        details: { failedCount },
+      },
+    );
+  }
+
   const severityRank = { high: 0, medium: 1, info: 2, low: 3 };
   alerts.sort((a, b) => {
     const r = (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9);
@@ -936,6 +1066,37 @@ async function tryLoadProductServiceFactorySnapshot(integration) {
   }
 }
 
+async function tryLoadProductServiceWebhookAttempts(integration) {
+  const result = {
+    success: false,
+    url: null,
+    fetchedAt: null,
+    snapshot: null,
+    error: null,
+  };
+
+  try {
+    const fetched = await fetchFactoryWebhookDeliveryAttempts(integration);
+    return {
+      success: true,
+      url: fetched.url,
+      fetchedAt: fetched.fetchedAt,
+      snapshot: fetched.snapshot,
+      error: null,
+    };
+  } catch (error) {
+    result.url = (() => {
+      try {
+        return buildInternalWebhookAttemptsUrl(integration.apiBaseUrl);
+      } catch {
+        return null;
+      }
+    })();
+    result.error = error instanceof Error ? error.message : String(error);
+    return result;
+  }
+}
+
 export async function handleGetFactorySnapshot() {
   const started = performance.now();
   const config = loadConfig();
@@ -968,6 +1129,9 @@ export async function handleGetFactorySnapshot() {
     const productFetch = integration.enabled
       ? await tryLoadProductServiceFactorySnapshot(integration)
       : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled", cacheUsed: false };
+    const webhookAttemptsFetch = integration.enabled
+      ? await tryLoadProductServiceWebhookAttempts(integration)
+      : { success: false, url: null, fetchedAt: null, snapshot: null, error: "Synthesis integration disabled" };
     const cacheInfo = getCachedProductSnapshot();
     const usedCachedProductSnapshot = Boolean(productFetch.cacheUsed === true);
     const productSnapshot = productFetch.snapshot || null;
@@ -1077,6 +1241,44 @@ export async function handleGetFactorySnapshot() {
       items: productItems,
     };
 
+    const webhookAttemptsSnapshot = webhookAttemptsFetch.success ? webhookAttemptsFetch.snapshot : null;
+    const webhookAttemptsItems = Array.isArray(webhookAttemptsSnapshot?.attempts)
+      ? webhookAttemptsSnapshot.attempts.map((attempt) => ({
+          id: asString(attempt.id, "unknown-attempt"),
+          subscriptionId: asString(attempt.subscriptionId, "unknown-subscription"),
+          productId: asString(attempt.productId, "unknown-product"),
+          customerId: asString(attempt.customerId, "unknown-customer"),
+          triggerType: asString(attempt.triggerType, "unknown"),
+          triggerEventId: asString(attempt.triggerEventId, null),
+          triggerEventCreatedAt: toIso(attempt.triggerEventCreatedAt),
+          attemptNumber: asFiniteNumber(attempt.attemptNumber, null),
+          terminal: Boolean(attempt.terminal),
+          status: asString(attempt.status, "unknown"),
+          httpStatus: asFiniteNumber(attempt.httpStatus, null),
+          errorMessage: asString(attempt.errorMessage, null),
+          signalPointId: asString(attempt.signalPointId, null),
+          signalBucketAt: toIso(attempt.signalBucketAt),
+          nextRetryAt: toIso(attempt.nextRetryAt),
+          createdAt: toIso(attempt.createdAt),
+        }))
+      : [];
+    const deliverySection = {
+      webhooks: {
+        available: Boolean(webhookAttemptsFetch.success),
+        endpointReachability: webhookAttemptsFetch.success ? "connected" : "degraded",
+        fetchedAt: webhookAttemptsFetch.fetchedAt || null,
+        persistenceBackend: asString(webhookAttemptsSnapshot?.persistenceBackend, null),
+        totalAttempts: asFiniteNumber(webhookAttemptsSnapshot?.total, webhookAttemptsItems.length) ?? webhookAttemptsItems.length,
+        statusCounts: {
+          delivered: asFiniteNumber(webhookAttemptsSnapshot?.statusCounts?.delivered, 0) ?? 0,
+          failed: asFiniteNumber(webhookAttemptsSnapshot?.statusCounts?.failed, 0) ?? 0,
+          deadLettered: asFiniteNumber(webhookAttemptsSnapshot?.statusCounts?.deadLettered, 0) ?? 0,
+        },
+        attempts: webhookAttemptsItems,
+        error: webhookAttemptsFetch.success ? null : (webhookAttemptsFetch.error || null),
+      },
+    };
+
     const stages = Array.isArray(productSnapshot?.pipeline?.stages) && productSnapshot.pipeline.stages.length > 0
       ? productSnapshot.pipeline.stages.map((stage) => ({
           stage: asString(stage.stage, "unknown"),
@@ -1160,7 +1362,9 @@ export async function handleGetFactorySnapshot() {
       pipeline: pipelineSection,
       economics: economicsSection,
       autonomy: autonomySection,
+      delivery: deliverySection,
       productFetch,
+      webhookAttemptsFetch,
       usedCachedProductSnapshot,
       kvErrors,
     });
@@ -1175,6 +1379,7 @@ export async function handleGetFactorySnapshot() {
       runtimeDbPath: dbPath,
       kvErrors,
       productFetch,
+      webhookAttemptsFetch,
       cacheInfo,
       usedCachedProductSnapshot,
     });
@@ -1193,6 +1398,7 @@ export async function handleGetFactorySnapshot() {
       sources: sourcesSection,
       pipeline: pipelineSection,
       outputs: outputsSection,
+      delivery: deliverySection,
       economics: economicsSection,
       autonomy: autonomySection,
       alerts,
