@@ -622,6 +622,41 @@ export function FactoryView({ runtime }: FactoryViewProps) {
     }).length;
   }, [outputs?.items]);
 
+  const packSummaries = useMemo(() => {
+    const byPack = new Map<string, {
+      packId: string;
+      total: number;
+      active: number;
+      stale: number;
+      revenue24h: number;
+      revenue7d: number;
+      avgFreshness: number | null;
+    }>();
+    for (const product of outputs?.items || []) {
+      const packId = product.domainPackId || 'unknown_pack';
+      const row = byPack.get(packId) || {
+        packId,
+        total: 0,
+        active: 0,
+        stale: 0,
+        revenue24h: 0,
+        revenue7d: 0,
+        avgFreshness: null,
+      };
+      row.total += 1;
+      if (['active', 'enabled', 'live', 'ok'].includes(String(product.status || '').toLowerCase())) row.active += 1;
+      const badges = (product.badges || []).map((b) => String(b).toLowerCase());
+      if (badges.includes('stale') || ((product.freshnessMinutes ?? 0) > 20)) row.stale += 1;
+      row.revenue24h += Number(product.economics?.revenue24h || 0);
+      row.revenue7d += Number(product.economics?.revenue7d || 0);
+      if (typeof product.freshnessMinutes === 'number' && Number.isFinite(product.freshnessMinutes)) {
+        row.avgFreshness = row.avgFreshness == null ? product.freshnessMinutes : ((row.avgFreshness * (row.total - 1)) + product.freshnessMinutes) / row.total;
+      }
+      byPack.set(packId, row);
+    }
+    return Array.from(byPack.values()).sort((a, b) => a.packId.localeCompare(b.packId));
+  }, [outputs?.items]);
+
   const settlementCoverageLabel = settlement?.summary?.txHashCoverageRate == null
     ? '—'
     : `${(settlement.summary.txHashCoverageRate * 100).toFixed(1)}%`;
@@ -764,6 +799,31 @@ export function FactoryView({ runtime }: FactoryViewProps) {
             </div>
           </div>
 
+
+          <SectionShell title="PACK SUMMARY" right={<span className="text-[10px] font-mono text-gray-500">derived from current output products</span>}>
+            {packSummaries.length === 0 ? (
+              <div className="text-sm text-gray-500 font-mono py-4">No pack-tagged products in current snapshot.</div>
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-3">
+                {packSummaries.map((pack) => (
+                  <div key={pack.packId} className="border border-gray-800 rounded-lg p-3 bg-black/20">
+                    <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                      <div className="font-mono text-xs text-neonCyan break-all">{pack.packId}</div>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${pack.stale > 0 ? statusBadgeClass('warning') : statusBadgeClass('ok')}`}>
+                        {pack.active}/{pack.total} active
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      <MetricRow label="stale" value={formatNum(pack.stale, 0)} />
+                      <MetricRow label="avg freshness" value={formatMaybeMinutes(pack.avgFreshness)} />
+                      <MetricRow label="rev24h" value={formatUsd(pack.revenue24h, 4)} />
+                      <MetricRow label="rev7d" value={formatUsd(pack.revenue7d, 4)} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </SectionShell>
 
           <SectionShell title="FACTORY FLOW" right={<span className="text-[10px] font-mono text-gray-500">scan left → right</span>}>
             <div className="flex flex-col gap-3">
