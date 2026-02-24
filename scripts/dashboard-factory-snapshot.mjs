@@ -574,6 +574,14 @@ function normalizeRuntimeSurvivalSnapshot(payload) {
   };
 }
 
+function buildInternalRuntimeSurvivalUrl(baseUrl) {
+  if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
+    throw new Error("Missing synthesis product API base URL.");
+  }
+  const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  return `${trimmed}${FACTORY_INTERNAL_RUNTIME_SURVIVAL_PATH}`;
+}
+
 function buildInternalBillingReconciliationUrl(baseUrl) {
   if (typeof baseUrl !== "string" || baseUrl.trim().length === 0) {
     throw new Error("Missing synthesis product API base URL.");
@@ -646,6 +654,27 @@ async function fetchFactoryWebhookDeliveryAttempts(integration) {
     url,
     fetchedAt: new Date().toISOString(),
     snapshot: normalizeWebhookAttemptsSnapshot(payload),
+  };
+}
+
+async function fetchFactoryRuntimeSurvival(integration) {
+  const url = buildInternalRuntimeSurvivalUrl(integration.apiBaseUrl);
+  const timeoutMs = Math.max(1500, Math.min(20_000, Number(integration.requestTimeoutMs || 10_000)));
+  const payload = await fetchJsonWithTimeout(
+    url,
+    {
+      method: "GET",
+      headers: {
+        "x-internal-token": integration.internalToken || "",
+      },
+    },
+    timeoutMs,
+  );
+
+  return {
+    url,
+    fetchedAt: new Date().toISOString(),
+    snapshot: normalizeRuntimeSurvivalSnapshot(payload),
   };
 }
 
@@ -1601,6 +1630,37 @@ async function tryLoadProductServiceWebhookAttempts(integration) {
     result.url = (() => {
       try {
         return buildInternalWebhookAttemptsUrl(integration.apiBaseUrl);
+      } catch {
+        return null;
+      }
+    })();
+    result.error = error instanceof Error ? error.message : String(error);
+    return result;
+  }
+}
+
+async function tryLoadProductServiceRuntimeSurvival(integration) {
+  const result = {
+    success: false,
+    url: null,
+    fetchedAt: null,
+    snapshot: null,
+    error: null,
+  };
+
+  try {
+    const fetched = await fetchFactoryRuntimeSurvival(integration);
+    return {
+      success: true,
+      url: fetched.url,
+      fetchedAt: fetched.fetchedAt,
+      snapshot: fetched.snapshot,
+      error: null,
+    };
+  } catch (error) {
+    result.url = (() => {
+      try {
+        return buildInternalRuntimeSurvivalUrl(integration.apiBaseUrl);
       } catch {
         return null;
       }

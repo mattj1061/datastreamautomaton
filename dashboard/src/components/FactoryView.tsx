@@ -631,6 +631,7 @@ export function FactoryView({ runtime }: FactoryViewProps) {
       revenue24h: number;
       revenue7d: number;
       avgFreshness: number | null;
+      freshnessCount: number;
     }>();
     for (const product of outputs?.items || []) {
       const packId = product.domainPackId || 'unknown_pack';
@@ -642,6 +643,7 @@ export function FactoryView({ runtime }: FactoryViewProps) {
         revenue24h: 0,
         revenue7d: 0,
         avgFreshness: null,
+        freshnessCount: 0,
       };
       row.total += 1;
       if (['active', 'enabled', 'live', 'ok'].includes(String(product.status || '').toLowerCase())) row.active += 1;
@@ -650,11 +652,50 @@ export function FactoryView({ runtime }: FactoryViewProps) {
       row.revenue24h += Number(product.economics?.revenue24h || 0);
       row.revenue7d += Number(product.economics?.revenue7d || 0);
       if (typeof product.freshnessMinutes === 'number' && Number.isFinite(product.freshnessMinutes)) {
-        row.avgFreshness = row.avgFreshness == null ? product.freshnessMinutes : ((row.avgFreshness * (row.total - 1)) + product.freshnessMinutes) / row.total;
+        row.freshnessCount += 1;
+        row.avgFreshness = row.avgFreshness == null
+          ? product.freshnessMinutes
+          : ((row.avgFreshness * (row.freshnessCount - 1)) + product.freshnessMinutes) / row.freshnessCount;
       }
       byPack.set(packId, row);
     }
     return Array.from(byPack.values()).sort((a, b) => a.packId.localeCompare(b.packId));
+  }, [outputs?.items]);
+
+  const packWiringSummary = useMemo(() => {
+    const expected = [
+      'pack_0_crossdomain',
+      'pack_1_crypto_plumbing',
+      'pack_2_macro_revision_fragility',
+      'pack_3_power_grid_spillover',
+    ];
+    const productItems = outputs?.items || [];
+    const byPack = new Map<string, { total: number; active: number }>();
+    for (const product of productItems) {
+      const packId = product.domainPackId || 'unknown_pack';
+      const row = byPack.get(packId) || { total: 0, active: 0 };
+      row.total += 1;
+      if (['active', 'enabled', 'live', 'ok'].includes(String(product.status || '').toLowerCase())) row.active += 1;
+      byPack.set(packId, row);
+    }
+    const expectedRows = expected.map((packId) => {
+      const row = byPack.get(packId);
+      return {
+        packId,
+        present: Boolean(row && row.total > 0),
+        total: row?.total ?? 0,
+        active: row?.active ?? 0,
+      };
+    });
+    const extraRows = Array.from(byPack.entries())
+      .filter(([packId]) => !expected.includes(packId))
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([packId, row]) => ({ packId, present: true, total: row.total, active: row.active }));
+    return {
+      expectedRows,
+      extraRows,
+      missingCount: expectedRows.filter((row) => !row.present).length,
+    };
   }, [outputs?.items]);
 
   const settlementCoverageLabel = settlement?.summary?.txHashCoverageRate == null
@@ -726,6 +767,29 @@ export function FactoryView({ runtime }: FactoryViewProps) {
             <KpiCard title="UPTIME (7D)" value={formatPctPoints(economics?.uptime7dPercent)} subtitle="health samples" icon={<Gauge className="w-4 h-4" />} tone={(economics?.uptime7dPercent ?? 100) < 99 ? 'yellow' : 'green'} />
             <KpiCard title="FACTORY SNAPSHOT AGE" value={relativeTime(snapshot.generatedAt)} subtitle={formatTimestamp(snapshot.generatedAt)} icon={<RefreshCcw className="w-4 h-4" />} />
             <KpiCard title="FACTORY API LATENCY" value={factory.fetchLatencyMs == null ? '—' : `${factory.fetchLatencyMs}ms`} subtitle={runtime.fetchLatencyMs == null ? 'runtime n/a' : `runtime ${runtime.fetchLatencyMs}ms`} icon={<Server className="w-4 h-4" />} />
+          </div>
+
+          <div className="border border-panelBorder bg-panelBg rounded-xl p-4">
+            <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+              <div className="font-mono text-xs tracking-widest text-gray-400 min-w-[180px]">PACK WIRING STATUS</div>
+              <div className="flex flex-wrap items-center gap-2">
+                {packWiringSummary.expectedRows.map((row) => (
+                  <span
+                    key={row.packId}
+                    className={`text-[10px] font-mono px-2 py-1 rounded border ${row.present ? statusBadgeClass(row.active > 0 ? 'ok' : 'attention') : statusBadgeClass('warning')}`}
+                    title={row.present ? `${row.active}/${row.total} active products` : 'Expected pack missing from current product snapshot'}
+                  >
+                    {row.packId} {row.active}/{row.total}
+                  </span>
+                ))}
+                {packWiringSummary.extraRows.map((row) => (
+                  <span key={row.packId} className="text-[10px] font-mono px-2 py-1 rounded border border-neonCyan/20 text-neonCyan bg-neonCyan/5" title="Additional pack detected in product snapshot">{row.packId} {row.active}/{row.total}</span>
+                ))}
+              </div>
+              <div className="xl:ml-auto text-[11px] text-gray-500 font-mono">
+                {packWiringSummary.missingCount > 0 ? `${packWiringSummary.missingCount} expected pack(s) missing from current snapshot` : 'All expected packs visible in product snapshot'}
+              </div>
+            </div>
           </div>
 
           <div className="w-full">
