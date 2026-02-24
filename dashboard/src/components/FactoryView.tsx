@@ -27,7 +27,8 @@ import type {
   FactoryWebhookDeliveryAttempt,
 } from '../types/automaton';
 
-type FamilyFilter = 'all' | 'market_microstructure' | 'onchain_flow' | 'macro_news_risk';
+type FamilyFilter = 'all' | string;
+type PackFilter = 'all' | string;
 type ProductStatusFilter = 'all' | 'active' | 'paused' | 'stale' | 'degraded';
 
 interface FactoryViewProps {
@@ -391,6 +392,11 @@ function ProductRow({ product }: { product: FactoryOutputProduct }) {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-gray-100 font-mono truncate">{product.productId}</span>
             <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${statusBadgeClass(product.status)}`}>{humanizeStatus(product.status)}</span>
+            {product.domainPackId ? (
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded border border-neonCyan/20 text-neonCyan bg-neonCyan/5">
+                {product.domainPackId}
+              </span>
+            ) : null}
             {product.badges.map((badge) => (
               <span key={`${product.productId}-${badge}`} className="text-[10px] font-mono px-2 py-0.5 rounded border border-gray-700 text-gray-300 bg-black/20">
                 {badge}
@@ -514,6 +520,7 @@ function DataSourceRow({ source }: { source: FactoryDataSourceStatus }) {
 export function FactoryView({ runtime }: FactoryViewProps) {
   const factory = useFactorySnapshot(15_000);
   const [familyFilter, setFamilyFilter] = useState<FamilyFilter>('all');
+  const [packFilter, setPackFilter] = useState<PackFilter>('all');
   const [productStatusFilter, setProductStatusFilter] = useState<ProductStatusFilter>('all');
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
@@ -547,18 +554,27 @@ export function FactoryView({ runtime }: FactoryViewProps) {
     const items = outputs?.items || [];
     return items.filter((product) => {
       if (!productMatchesStatusFilter(product, productStatusFilter)) return false;
+      if (packFilter !== 'all' && (product.domainPackId || 'unknown') !== packFilter) return false;
       return matchesSearch(
-        [product.productId, product.status, product.latestRegime, ...(product.badges || [])],
+        [product.productId, product.domainPackId, product.status, product.latestRegime, ...(product.badges || [])],
         search.trim(),
       );
     });
-  }, [outputs?.items, productStatusFilter, search]);
+  }, [outputs?.items, productStatusFilter, packFilter, search]);
 
   const familySummariesByName = useMemo(() => {
     const map = new Map<string, FactoryInputFamilySummary>();
     for (const family of sources?.families || []) map.set(family.family, family);
     return map;
   }, [sources?.families]);
+
+  const packOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const product of outputs?.items || []) {
+      if (product.domainPackId) set.add(product.domainPackId);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [outputs?.items]);
 
   const streamsByFamily = useMemo(() => {
     const grouped = new Map<string, FactoryInputStream[]>();
@@ -702,6 +718,11 @@ export function FactoryView({ runtime }: FactoryViewProps) {
                   <option value="market_microstructure">market_microstructure</option>
                   <option value="onchain_flow">onchain_flow</option>
                   <option value="macro_news_risk">macro_news_risk</option>
+                  <option value="stablecoin_plumbing">stablecoin_plumbing</option>
+                  <option value="derivatives_risk">derivatives_risk</option>
+                  <option value="macro_release_revision">macro_release_revision</option>
+                  <option value="power_grid_stress">power_grid_stress</option>
+                  <option value="weather_hazard">weather_hazard</option>
                 </select>
               </label>
 
@@ -713,6 +734,16 @@ export function FactoryView({ runtime }: FactoryViewProps) {
                   <option value="paused">paused</option>
                   <option value="stale">stale</option>
                   <option value="degraded">degraded</option>
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs min-w-[220px]">
+                <span className="font-mono text-gray-500">OUTPUT PACK</span>
+                <select value={packFilter} onChange={(e) => setPackFilter(e.target.value as PackFilter)} className="bg-black/30 border border-gray-700 rounded px-2 py-2 text-gray-200 font-mono text-xs">
+                  <option value="all">all</option>
+                  {packOptions.map((packId) => (
+                    <option key={packId} value={packId}>{packId}</option>
+                  ))}
                 </select>
               </label>
 

@@ -352,6 +352,7 @@ export interface FactoryPipelineSection {
 
 export interface FactoryOutputProduct {
   productId: string;
+  domainPackId?: string | null;
   status: string;
   latestPublishAt: string | null;
   freshnessMinutes: number | null;

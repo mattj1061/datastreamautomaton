@@ -322,6 +322,7 @@ function normalizeFactoryInternalSnapshot(payload) {
       const quality = isRecord(item.quality) ? item.quality : {};
       return {
         productId: asString(item.productId, "unknown-product"),
+        domainPackId: asString(item.domainPackId, null),
         status: asString(item.status, "unknown"),
         latestPublishAt: toIso(item.latestPublishAt),
         freshnessMinutes: asFiniteNumber(item.freshnessMinutes, null),
@@ -1756,6 +1757,7 @@ export async function handleGetFactorySnapshot() {
           return {
             ...product,
             productId: asString(product.productId, "unknown-product"),
+            domainPackId: asString(product.domainPackId, null),
             status,
             latestPublishAt: toIso(product.latestPublishAt),
             freshnessMinutes: freshness,
